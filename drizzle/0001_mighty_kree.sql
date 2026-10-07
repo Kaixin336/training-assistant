@@ -1,0 +1,1 @@
+ALTER TABLE `profiles` ADD `last_mutation` text DEFAULT '' NOT NULL;

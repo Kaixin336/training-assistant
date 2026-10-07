@@ -1,0 +1,3 @@
+# 部署时 Cloudflare 会让你填这两项（会保存为加密的 Secret，不会出现在代码里）。
+OWNER_ACCESS_KEY= # 访问口令：至少 20 个字符，用来登录 App
+DEEPSEEK_API_KEY= # DeepSeek API key（sk- 开头），可以先留空，之后在 App 里填

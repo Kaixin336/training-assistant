@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "lib": ["dom", "dom.iterable", "esnext"],
+    "skipLibCheck": true, "strict": true, "noEmit": true, "esModuleInterop": true,
+    "module": "esnext", "moduleResolution": "bundler", "resolveJsonModule": true,
+    "isolatedModules": true, "jsx": "react-jsx",
+    "paths": { "@/*": ["./*"] }, "types": ["node", "@cloudflare/workers-types", "vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "lib/**/*.ts", "app/api/**/*.ts", "server/**/*.ts", "components/**/*.tsx", "hooks/**/*.ts", "vite.config.ts"],
+  "exclude": ["node_modules", "dist", "lib/connectors.ts", "lib/connector-context.ts", "lib/connector-preview.d.ts"]
+}

@@ -1,0 +1,50 @@
+import {env} from "./runtime-env";
+import {requireOwner,AuthError} from "./auth";
+import {photoStore,PhotoStorageError} from "./photo-store";
+import {hasAiConfig} from "./ai-config";
+import {DEFAULT_SETTINGS,seedItems,todayNZ,type AppData,type LogItem,type ChatMessage,type PlanChange,type Settings,type TrainingSession} from "./domain";
+import {withPlannedMeals,type DayType} from "./diet";
+import {activeTrainingSession,TrainingSessionError,sessionDatabaseConflict} from "./training-sessions";
+import {SEED_PLAN} from "./plan";
+
+export class AppError extends Error { status:number;constructor(message:string,status=400){super(message);this.status=status;} }
+export function db(){if(!env.DB)throw new AppError("训练记录暂时无法读取，请稍后重试。",503);return env.DB;}
+export function bucket(){return photoStore();}
+export async function owner(request:Request){return requireOwner(request);}
+export function json(body:unknown,status=200){return Response.json(body,{status,headers:{"Cache-Control":"no-store, private","X-Content-Type-Options":"nosniff"}});}
+export function failure(error:unknown){if(error instanceof AppError||error instanceof AuthError||error instanceof PhotoStorageError||error instanceof TrainingSessionError)return json({error:error.message},error.status);if(sessionDatabaseConflict(error))return json({error:"训练记录刚在其他页面更新，本条未保存；文字已保留，请重试。"},409);if(error&&typeof error==="object"&&"issues" in error)return json({error:"请检查填写的数值，本次未保存。"},400);console.error("Journal operation failed",error instanceof Error?error.name:"unknown");return json({error:"暂时无法保存或读取记录。输入内容已保留，请重试。"},503);}
+export async function ensureProfile(user:string){const database=db();const now=new Date().toISOString();await database.batch([database.prepare("INSERT OR IGNORE INTO profiles (owner,settings,plan,plan_version,last_mutation) VALUES (?,?,?,0,'')").bind(user,JSON.stringify(DEFAULT_SETTINGS),JSON.stringify(SEED_PLAN)),...seedItems().map(item=>database.prepare("INSERT OR IGNORE INTO records (owner,id,kind,date,payload,deleted,updated_at) VALUES (?,?,?,?,?,0,?)").bind(user,item.id,item.kind,item.date,JSON.stringify(item),now))]);}
+/** Changes whenever any of the user's data, the plan or the settings change (see drizzle/0007). */
+export function dataVersion(row:{data_version:number;plan_version:number;settings:string}){let hash=5381;for(let i=0;i<row.settings.length;i++)hash=(hash*33+row.settings.charCodeAt(i))|0;return `${row.data_version}.${row.plan_version}.${(hash>>>0).toString(36)}`;}
+export async function loadData(user:string,created=false):Promise<AppData>{const database=db();const [profile,records,changes,messages,sessions,config,health]=await Promise.all([database.prepare("SELECT settings,plan,plan_version,data_version FROM profiles WHERE owner=?").bind(user).first<{settings:string;plan:string;plan_version:number;data_version:number}>(),database.prepare("SELECT payload FROM records WHERE owner=? AND deleted=0 ORDER BY date,updated_at").bind(user).all<{payload:string}>(),database.prepare("SELECT payload FROM plan_changes WHERE owner=? ORDER BY created_at DESC").bind(user).all<{payload:string}>(),database.prepare("SELECT payload FROM messages WHERE owner=? ORDER BY created_at DESC LIMIT 150").bind(user).all<{payload:string}>(),database.prepare("SELECT payload FROM training_sessions WHERE owner=? ORDER BY last_activity_at DESC LIMIT 60").bind(user).all<{payload:string}>(),database.prepare("SELECT key,payload FROM private_config WHERE owner=? AND key IN ('exercise-aliases','day-types')").bind(user).all<{key:string;payload:string}>(),database.prepare("SELECT last_sync_at FROM health_sync WHERE owner=?").bind(user).first<{last_sync_at:string|null}>()]);if(!profile){if(created)throw new AppError("暂时无法打开记录，请重试。",503);await ensureProfile(user);return loadData(user,true);}const today=todayNZ();const trainingSessions=sessions.results.map(r=>JSON.parse(r.payload) as TrainingSession);const stored=(key:string)=>{const row=config.results.find(r=>r.key===key);return row?JSON.parse(row.payload):{};};const settings=JSON.parse(profile.settings) as Settings,dayTypes=stored('day-types') as Record<string,DayType>;
+ // The fixed diet plan's meals are implied for every day the user did not report otherwise; they are never stored.
+ return {settings,plan:JSON.parse(profile.plan),planVersion:profile.plan_version,items:withPlannedMeals(records.results.map(r=>JSON.parse(r.payload)),settings,today,dayTypes),dayTypes,healthLastSync:health?.last_sync_at??null,version:dataVersion(profile),changes:changes.results.map(r=>JSON.parse(r.payload)),messages:messages.results.map(r=>JSON.parse(r.payload)).reverse(),sessions:trainingSessions,exerciseAliases:stored('exercise-aliases'),activeSession:activeTrainingSession(trainingSessions,today),aiEnabled:await hasAiConfig(user),today};}
+export async function receipt(user:string,id:string):Promise<Record<string,unknown>|null>{const r=await db().prepare("SELECT payload FROM operations WHERE owner=? AND id=?").bind(user,id).first<{payload:string}>();return r?JSON.parse(r.payload):null;}
+export function recordStatement(user:string,item:LogItem){return db().prepare("INSERT INTO records (owner,id,kind,date,payload,deleted,updated_at) VALUES (?,?,?,?,?,0,?) ON CONFLICT(owner,id) DO UPDATE SET kind=excluded.kind,date=excluded.date,payload=excluded.payload,deleted=0,updated_at=excluded.updated_at").bind(user,item.id,item.kind,item.date,JSON.stringify(item),new Date().toISOString());}
+export function messageStatement(user:string,message:ChatMessage){return db().prepare("INSERT INTO messages (owner,id,payload,created_at) VALUES (?,?,?,?)").bind(user,message.id,JSON.stringify(message),message.createdAt);}
+export function changeStatement(user:string,change:PlanChange){return db().prepare("INSERT INTO plan_changes (owner,id,payload,created_at) VALUES (?,?,?,?) ON CONFLICT(owner,id) DO UPDATE SET payload=excluded.payload").bind(user,change.id,JSON.stringify(change),change.createdAt);}
+export function operationStatement(user:string,id:string,result:unknown){return db().prepare("INSERT INTO operations (owner,id,payload,created_at) VALUES (?,?,?,?)").bind(user,id,JSON.stringify(result),new Date().toISOString());}
+export async function commit(user:string,id:string,statements:D1PreparedStatement[],result:Record<string,unknown>){const existing=await receipt(user,id);if(existing)return existing;try{await db().batch([operationStatement(user,id,result),...statements]);return result;}catch(error){const recovered=await receipt(user,id);if(recovered)return recovered;throw error;}}
+export async function getRecord(user:string,id:string,includeDeleted=false){const row=await db().prepare(`SELECT payload FROM records WHERE owner=? AND id=?${includeDeleted?"":" AND deleted=0"}`).bind(user,id).first<{payload:string}>();if(!row)throw new AppError("此条记录已不可用，请刷新页面。",404);return JSON.parse(row.payload) as LogItem;}
+export async function getChange(user:string,id:string){const row=await db().prepare("SELECT payload FROM plan_changes WHERE owner=? AND id=?").bind(user,id).first<{payload:string}>();if(!row)throw new AppError("未找到此计划建议。",404);return JSON.parse(row.payload) as PlanChange;}
+export async function changePlan(user:string,operationId:string,change:PlanChange,mode:"confirm"|"undo_plan"){
+ const prior=await receipt(user,operationId);if(prior)return prior;
+ const data=await loadData(user);const completed=await receipt(user,operationId);if(completed)return completed;if(mode==="confirm"&&change.status!=="proposed")throw new AppError("这条建议已处理，请刷新查看当前计划。",409);
+ if(mode==="confirm"&&change.baseVersion!==data.planVersion)throw new AppError("预览后计划已更新，请取消后重新生成建议。",409);
+ if(mode==="undo_plan"&&(change.status!=="applied"||JSON.stringify(data.plan)!==JSON.stringify(change.after)))throw new AppError("请先撤销更新的计划变更，避免覆盖。",409);
+ const next=mode==="confirm"?change.after:change.before;const now=new Date().toISOString();const updated:PlanChange={...change,status:mode==="confirm"?"applied":"undone",...(mode==="confirm"?{appliedAt:now}:{undoneAt:now})};const database=db();const reply={message:mode==="confirm"?"计划已更新，历史训练记录保持不变。":"计划变更已撤销，历史训练记录保持不变。"};
+ const guard="EXISTS (SELECT 1 FROM profiles WHERE owner=? AND last_mutation=?)";
+ let results;try{results=await database.batch([database.prepare("UPDATE profiles SET plan=?,plan_version=plan_version+1,last_mutation=? WHERE owner=? AND plan_version=? AND EXISTS (SELECT 1 FROM plan_changes WHERE owner=? AND id=? AND payload=?)").bind(JSON.stringify(next),operationId,user,data.planVersion,user,change.id,JSON.stringify(change)),database.prepare(`UPDATE plan_changes SET payload=? WHERE owner=? AND id=? AND ${guard}`).bind(JSON.stringify(updated),user,change.id,user,operationId),database.prepare(`INSERT INTO operations (owner,id,payload,created_at) SELECT ?,?,?,? WHERE ${guard}`).bind(user,operationId,JSON.stringify(reply),now,user,operationId)]);}catch(error){const saved=await receipt(user,operationId);if(saved)return saved;throw error;}
+ if(!results[0].meta.changes){const saved=await receipt(user,operationId);if(saved)return saved;}
+ if(!results[0].meta.changes)throw new AppError("计划已在其他页面更新，请刷新后重试。",409);return reply;
+}
+export async function cancelPlan(user:string,operationId:string,change:PlanChange){
+ const prior=await receipt(user,operationId);if(prior)return prior;
+ if(change.status!=="proposed")throw new AppError("这条建议已处理。",409);
+ const updated={...change,status:"cancelled"};const reply={message:"建议已取消，计划保持不变。"};
+ let results;try{results=await db().batch([
+ db().prepare("UPDATE plan_changes SET payload=? WHERE owner=? AND id=? AND payload=?").bind(JSON.stringify(updated),user,change.id,JSON.stringify(change)),
+ db().prepare("INSERT INTO operations (owner,id,payload,created_at) SELECT ?,?,?,? WHERE changes()=1").bind(user,operationId,JSON.stringify(reply),new Date().toISOString())]);}catch(error){const saved=await receipt(user,operationId);if(saved)return saved;throw error;}
+ if(!results[0].meta.changes){const saved=await receipt(user,operationId);if(saved)return saved;}
+ if(!results[0].meta.changes)throw new AppError("这条建议已在其他页面更新，请刷新。",409);return reply;
+}

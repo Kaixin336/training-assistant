@@ -1,0 +1,74 @@
+{
+  "name": "training-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "predev": "node scripts/setup-local.mjs",
+    "typecheck": "tsc --noEmit",
+    "deploy": "node scripts/deploy.mjs",
+    "db:generate": "drizzle-kit generate",
+    "dev": "vite",
+    "build": "vite build",
+    "setup:local": "node scripts/setup-local.mjs",
+    "preview": "vite preview",
+    "test:runtime": "node scripts/test-runtime.mjs",
+    "test:core": "node scripts/test-core.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.7.0",
+    "@hookform/resolvers": "^5.7.1",
+    "@shadcn/react": "^0.3.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "cmdk": "^1.1.1",
+    "date-fns": "^4.4.0",
+    "drizzle-orm": "0.45.2",
+    "embla-carousel-react": "^8.6.0",
+    "input-otp": "^1.4.2",
+    "lucide-react": "^1.31.0",
+    "next-themes": "^0.4.6",
+    "radix-ui": "^1.6.7",
+    "react": "19.2.6",
+    "react-day-picker": "^10.0.1",
+    "react-dom": "19.2.6",
+    "react-hook-form": "^7.85.0",
+    "react-resizable-panels": "^4.12.2",
+    "recharts": "^3.8.0",
+    "sonner": "^2.0.8",
+    "tailwind-merge": "3.6.0",
+    "vaul": "^1.1.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@cloudflare/workers-types": "4.20260515.1",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "tailwindcss": "4.2.1",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "5.9.3",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0",
+    "esbuild": "^0.28.0"
+  },
+  "type": "module",
+  "description": "私人训练助手：一句话或拍照记录训练、饮食和身体数据，自动整理力量进步、周报和恢复状态。",
+  "cloudflare": {
+    "bindings": {
+      "OWNER_ACCESS_KEY": {
+        "description": "你的**访问口令**：自己设一串至少 20 个字符的字母数字（记下来，以后用它登录 App）。"
+      },
+      "DEEPSEEK_API_KEY": {
+        "description": "**DeepSeek API key**（以 `sk-` 开头），用于 AI 记录和拍照识别。没有可以先留空，之后在 App 的“设置 › AI 助手”里填。"
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+import {sqliteTable,text,integer,index,primaryKey} from "drizzle-orm/sqlite-core";
+export const profiles=sqliteTable("profiles",{owner:text("owner").primaryKey(),settings:text("settings").notNull(),plan:text("plan").notNull(),planVersion:integer("plan_version").notNull().default(0),lastMutation:text("last_mutation").notNull().default("")});
+export const records=sqliteTable("records",{owner:text("owner").notNull(),id:text("id").notNull(),kind:text("kind").notNull(),date:text("date").notNull(),payload:text("payload").notNull(),deleted:integer("deleted").notNull().default(0),updatedAt:text("updated_at").notNull()},t=>[primaryKey({columns:[t.owner,t.id]}),index("records_owner_date").on(t.owner,t.date)]);
+export const messages=sqliteTable("messages",{owner:text("owner").notNull(),id:text("id").notNull(),payload:text("payload").notNull(),createdAt:text("created_at").notNull()},t=>[primaryKey({columns:[t.owner,t.id]})]);
+export const changes=sqliteTable("plan_changes",{owner:text("owner").notNull(),id:text("id").notNull(),payload:text("payload").notNull(),createdAt:text("created_at").notNull()},t=>[primaryKey({columns:[t.owner,t.id]})]);
+export const operations=sqliteTable("operations",{owner:text("owner").notNull(),id:text("id").notNull(),payload:text("payload").notNull(),createdAt:text("created_at").notNull()},t=>[primaryKey({columns:[t.owner,t.id]})]);
