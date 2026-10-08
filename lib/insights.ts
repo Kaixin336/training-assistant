@@ -241,6 +241,45 @@ export function energyBalance(items: LogItem[], today: string) {
   return { intake: Math.round(intake), expenditure: Math.round(expenditure / 10) * 10, perWeek: change / days * 7 };
 }
 
+const clock = new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Auckland", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+/**
+ * Resting energy for the whole day. The nightly sync runs before midnight (22:00), so its figure misses the
+ * last hours; resting burn is steady, so it is scaled up by the part of the day that had passed at sync time.
+ */
+function basalDay(items: LogItem[], date: string) {
+  const row = items.filter((i): i is Health => i.kind === "health" && i.date === date && i.basalEnergyKcal != null).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+  if (!row) return null;
+  const parts = Object.fromEntries(clock.formatToParts(new Date(row.createdAt)).map(p => [p.type, p.value]));
+  const passed = (+parts.hour * 60 + +parts.minute) / 1440;
+  return `${parts.year}-${parts.month}-${parts.day}` === date && passed >= .5 && passed < .99 ? row.basalEnergyKcal! / passed : row.basalEnergyKcal!;
+}
+/** The Watch's total for a day (resting + active energy), when both were synced. */
+const watchTotal = (items: LogItem[], date: string) => { const basal = basalDay(items, date), active = dailyHealthValue(items, date, "activeEnergyKcal"); return basal !== null && active !== null ? basal + active : null; };
+/**
+ * A day's real expenditure. The Watch measures each day; once three weeks of intake and weight exist, its
+ * totals are scaled so that on average they match what the weight trend says was burned (Watch estimates
+ * often run high). Today is not over, so it is an estimate from the calibrated recent average.
+ */
+export function dailyExpenditure(items: LogItem[], date: string, today: string): { kcal: number; estimate: boolean; source: "watch" | "trend" } | null {
+  const balance = energyBalance(items, today);
+  const recent = Array.from({ length: 21 }, (_, i) => watchTotal(items, addDays(today, -(i + 1)))).filter((v): v is number => v !== null);
+  const factor = balance && recent.length >= 10 ? Math.min(1.2, Math.max(.7, balance.expenditure / mean(recent)!)) : 1;
+  const round = (n: number) => Math.round(n / 10) * 10;
+  if (date < today) {
+    const total = watchTotal(items, date);
+    if (total !== null) return { kcal: round(total * factor), estimate: false, source: "watch" };
+    return balance ? { kcal: balance.expenditure, estimate: true, source: "trend" } : null;
+  }
+  if (balance) return { kcal: balance.expenditure, estimate: true, source: "trend" };
+  const week = recent.slice(0, 7);
+  return week.length >= 3 ? { kcal: round(mean(week)! * factor), estimate: true, source: "watch" } : null;
+}
+/** Intake minus expenditure: negative is a deficit. */
+export function dayBalance(items: LogItem[], date: string, today: string) {
+  const intake = intakeOn(items, date), spent = dailyExpenditure(items, date, today);
+  return intake === null || !spent ? null : { intake: Math.round(intake), expenditure: spent.kcal, diff: Math.round(intake - spent.kcal), estimate: spent.estimate, source: spent.source };
+}
+
 /* ── The plan's own 14-day review rules ────────────────────────────────── */
 export type Review = { tone: "good" | "hold" | "care" | ""; title: string; text: string; adjust?: number };
 export function dietReview(items: LogItem[], today: string, settings: Settings, signals: { strengthDown: boolean; lowReadinessDays: number }): Review | null {

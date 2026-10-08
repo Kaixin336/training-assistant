@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "我的训练助手",
-  "short_name": "训练助手",
+  "name": "训记",
+  "short_name": "训记",
   "description": "私人训练记录：练完汇报，自动整理力量、身体和恢复数据。",
   "lang": "zh-CN",
   "start_url": "/",

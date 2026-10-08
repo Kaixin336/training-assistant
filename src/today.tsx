@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, MessagesSquare, Plus, X } from "lucide-react";
-import { addDays, dailyTotals, itemSummary, todayNZ, weekStart, type AppData, type ChatMessage, type Food, type LogItem, type Workout } from "@/lib/domain";
+import { addDays, itemSummary, todayNZ, weekStart, type AppData, type ChatMessage, type LogItem, type Workout } from "@/lib/domain";
 import { postJson, storageGet, storageSet } from "./api";
 import { useApp, type Actions } from "./context";
 import { feelText, kindLabels, phaseLabels, unitTags } from "./labels";
 import { dayExercises, dayLabel, fmt, formatLoad, phaseWeek, primaryMeasure, sessionValue, setText, signed, weekday, type DayExercise } from "./metrics";
-import { DayTypeToggle, exerciseTarget, MealsSection, planCheckIns, ReadinessCard } from "./plan-ui";
+import { DayTypeToggle, DietLink, exerciseTarget, planCheckIns, ReadinessCard, TodayStrip } from "./plan-ui";
 import { isPlanned } from "@/lib/diet";
 import { Empty, Screen, Section, Sheet, useNow, useToast } from "./ui";
 
@@ -18,10 +18,10 @@ export function TodayScreen() {
   const isToday = date === data.today;
   const week = phaseWeek(data);
   return <Screen root composer title={isToday ? "今天" : dayLabel(date)}
-    kicker={<><DayTypeToggle date={date} /><span className={`phase-dot ${data.settings.phase}`} />{weekday(date)} · {phaseLabels[data.settings.phase]}{week ? ` 第 ${week} 周` : ""}</>}
+    kicker={<><DayTypeToggle date={date} />{weekday(date)}{data.settings.phase !== "unspecified" ? ` · ${phaseLabels[data.settings.phase].replace("期", "")}第 ${week ?? 1} 周` : ""}</>}
     right={<>{!isToday && <button className="text-btn strong" onClick={() => setDate(data.today)}>今天</button>}<button className="icon-btn" aria-label="对话记录" onClick={() => setLog(true)}><MessagesSquare /></button></>}>
     <WeekStrip />
-    <Stats />
+    <TodayStrip date={date} />
     {isToday && <ReadinessCard />}
     {isToday && data.activeSession && <LiveSession />}
     {isToday && <CheckIns />}
@@ -46,21 +46,6 @@ function WeekStrip() {
   </div>;
 }
 
-function Stats() {
-  const { data, date, actions } = useApp();
-  const day = dailyTotals(data.items, date);
-  const cells = [
-    { label: "体重", value: day.weight === null ? null : fmt(day.weight, 1), unit: "kg", prefill: "体重 " },
-    { label: "睡眠", value: day.sleep === null ? null : fmt(day.sleep, 1), unit: "小时", prefill: "睡眠 " },
-    { label: "步数", value: day.steps === null ? null : day.steps.toLocaleString("zh-CN"), unit: "", prefill: "步数 " },
-    { label: "蛋白质", value: day.hasProtein ? `${Math.round(day.protein)}${day.partialProtein ? "+" : ""}` : null, unit: "g", prefill: "午餐：" },
-  ];
-  return <div className="stats">{cells.map(c => <button key={c.label} className={`stat${c.value === null ? " empty" : ""}`} onClick={() => actions.compose(c.prefill)}>
-    <div className="stat-label">{c.label}</div>
-    <div className="stat-value">{c.value ?? "—"}{c.value !== null && c.unit && <span className="stat-unit">{c.unit}</span>}</div>
-  </button>)}</div>;
-}
-
 function LiveSession() {
   const { data, actions } = useApp();
   const session = data.activeSession!;
@@ -82,10 +67,8 @@ function LiveSession() {
 function CheckIns() {
   const { data, actions } = useApp();
   const due = planCheckIns(data);
-  const lastPhoto = data.items.filter(i => i.kind === "photo").map(i => i.date).sort().at(-1);
-  if (!lastPhoto || lastPhoto < addDays(data.today, -27)) due.push({ key: "photo", label: lastPhoto ? "4 周没拍对比照" : "拍第一组对比照" });
   if (!due.length) return null;
-  const open = (key: string) => key === "photo" ? actions.openTab("body", { screen: "photos" }) : key === "sync" ? void (window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("同步健康")}`) : actions.compose(key === "weight" ? "体重 " : "腰围 ");
+  const open = (_key: string) => { window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("同步健康")}`; void actions; };
   return <div className="chips checkins">{due.map(d => <button key={d.key} className="chip" onClick={() => open(d.key)}><span className="dot" />{d.label}</button>)}</div>;
 }
 
@@ -94,8 +77,9 @@ function DayLog() {
   const items = data.items.filter(i => i.date === date);
   const exercises = dayExercises(data.items, date).filter(e => e.rows.length > 0);
   const cardio = items.filter((i): i is Workout => i.kind === "workout" && i.sets.length === 0);
-  const body = items.filter(i => i.kind === "metric");
-  const recovery = items.filter(i => i.kind === "health");
+  const body = items.filter(i => i.kind === "metric" && i.metric !== "weight" && i.metric !== "waist");
+  // Sleep and steps are on the number strip; only other recovery values (HRV, resting heart rate…) are listed.
+  const recovery = items.filter(i => i.kind === "health" && Object.entries(i).some(([key, value]) => !["steps", "sleepH", "creatineTaken", "creatineG"].includes(key) && typeof value === "number"));
   const notes = items.filter(i => i.kind === "note");
   const photos = items.filter(i => i.kind === "photo");
   const workingSets = exercises.reduce((n, e) => n + e.rows.filter(r => !r.set.isWarmup).length, 0);
@@ -108,7 +92,7 @@ function DayLog() {
   return <>
     {exercises.length > 0 && <Section title="训练" meta={`${exercises.length} 个动作 · ${workingSets} 组`}>{exercises.map(e => <ExerciseBlock key={e.key} exercise={e} />)}</Section>}
     {cardio.length > 0 && <Section title="运动">{cardio.map(w => entry(w, undefined, w.id.startsWith("health-") ? "来自 Apple 健康" : w.session === "Apple Watch" ? "来自截图" : undefined))}</Section>}
-    <MealsSection date={date} />
+    <DietLink date={date} />
     {body.length > 0 && <Section title="身体">{body.map(m => entry(m, undefined, m.id.startsWith("health-") ? "来自健康" : undefined))}</Section>}
     {recovery.length > 0 && <Section title="恢复">{recovery.map(h => entry(h, undefined, h.id.startsWith("health-") ? "来自健康" : undefined))}</Section>}
     {notes.length > 0 && <Section title="备注">{notes.map(n => entry(n, undefined, n.kind === "note" && n.category === "pain" ? "疼痛" : undefined))}</Section>}
@@ -118,7 +102,7 @@ function DayLog() {
 
 function ExerciseBlock({ exercise }: { exercise: DayExercise }) {
   const { data, date, actions } = useApp();
-  const target = exerciseTarget(data.items, exercise.id, date, exercise.unit, data.settings, data.today);
+  const target = exerciseTarget(data.items, exercise.id, date, exercise.unit, data.settings);
   const { name, unit, rows, previous } = exercise;
   const previousSets = previous ? previous.sets.filter(s => !s.isWarmup) : [];
   const pain = exercise.records.some(r => r.pain);
@@ -135,7 +119,7 @@ function ExerciseBlock({ exercise }: { exercise: DayExercise }) {
       {pain && <span className="tag hot">疼痛</span>}
       {exercise.id && <ChevronRight className="row-chev" />}
     </button>
-    {target && <div className={`target ${target.tone}`}><span className="faint">{target.last}</span><span>{target.text}</span></div>}
+    {target && <div className={`target ${target.tone}`}><span>目标</span>{target.text}</div>}
     <div className="set-grid set-head" aria-hidden="true"><span>组</span><span>上次</span><span>重量</span><span>次数</span><span /></div>
     {rows.map(({ set, record, index }) => {
       const number = set.isWarmup ? null : ++n;
@@ -174,8 +158,14 @@ const readOutbox = (): Queued[] => { try { return JSON.parse(storageGet(OUTBOX) 
 const writeOutbox = (rows: Queued[]) => storageSet(OUTBOX, JSON.stringify(rows));
 type Reply = { kind: "ask" | "answer" | "info" | "error"; text: string; pendingId?: string };
 
+/** Where a saved record shows up, so the toast can say “已记到饮食” instead of just a count. */
+export function placesOf(items: LogItem[]) {
+  const place = (i: LogItem) => i.kind === "workout" ? (i.sets.length ? "训练" : "运动") : i.kind === "food" ? "饮食" : i.kind === "metric" ? "身体" : i.kind === "health" ? "恢复" : i.kind === "photo" ? "照片" : "备注";
+  return [...new Set(items.map(place))];
+}
+
 /** Created once in the shell so a pending reply or outbox survives switching tabs. */
-export function useComposer(data: AppData, date: string, actions: Pick<Actions, "undo" | "reload">) {
+export function useComposer(data: AppData, date: string, actions: Pick<Actions, "undo" | "reload"> & { placed: (ids: string[]) => string[] }) {
   const toast = useToast();
   const [sending, setSending] = useState(false);
   const [reply, setReply] = useState<Reply | null>(null);
@@ -183,15 +173,19 @@ export function useComposer(data: AppData, date: string, actions: Pick<Actions, 
   const identity = useRef<{ text: string; id: string } | null>(null);
   const flushing = useRef(false);
 
-  const handle = useCallback((assistant: ChatMessage | undefined) => {
-    if (!assistant) return;
+  /** Shows the reply; returns the IDs of what was saved so the caller can confirm it after the refresh. */
+  const handle = useCallback((assistant: ChatMessage | undefined): string[] => {
+    if (!assistant) return [];
     const extra = assistant.text.split("\n").filter(line => line && line !== "已记录：" && !line.startsWith("•")).join("\n");
-    if (assistant.itemIds?.length) {
-      const ids = assistant.itemIds;
-      toast(`已记录 ${ids.length} 条`, { label: "撤销", run: () => void actions.undo(ids) });
-      setReply(extra ? { kind: "info", text: extra } : null);
-    } else if (assistant.clarification) setReply({ kind: "ask", text: assistant.text, pendingId: assistant.id });
+    if (assistant.itemIds?.length) { setReply(extra ? { kind: "info", text: extra } : null); return assistant.itemIds; }
+    if (assistant.clarification) setReply({ kind: "ask", text: assistant.text, pendingId: assistant.id });
     else setReply({ kind: "answer", text: assistant.text });
+    return [];
+  }, []);
+  const saved = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    const places = actions.placed(ids);
+    toast(places.length ? `已记到${places.join("、")}` : `已记录 ${ids.length} 条`, { label: "撤销", run: () => void actions.undo(ids) });
   }, [actions, toast]);
 
   const flush = useCallback(async () => {
@@ -199,22 +193,23 @@ export function useComposer(data: AppData, date: string, actions: Pick<Actions, 
     const queued = readOutbox();
     if (!queued.length) return;
     flushing.current = true;
+    const sent: string[] = [];
     try {
       for (const item of queued) {
         // A message written yesterday but sent today must still land on yesterday.
         const text = item.composeDate !== todayNZ() && !DATED.test(item.text) && !FINISH.test(item.text) ? `${item.composeDate} ${item.text}` : item.text;
         try {
           const result = await postJson<{ messages: ChatMessage[] }>("/api/chat", { id: item.id, text, pendingMessageId: null });
-          handle(result.messages[1]);
+          sent.push(...handle(result.messages[1]));
         } catch (cause) {
           if (cause instanceof TypeError) break;
           setReply({ kind: "error", text: `一条离线记录没能保存：${cause instanceof Error ? cause.message : "未知错误"}\n原文：${item.text}` });
         }
         const rest = readOutbox().filter(q => q.id !== item.id); writeOutbox(rest); setOutbox(rest);
       }
-      await actions.reload().catch(() => {});
+      await actions.reload().then(() => saved(sent)).catch(() => {});
     } finally { flushing.current = false; }
-  }, [actions, handle]);
+  }, [actions, handle, saved]);
 
   useEffect(() => {
     void flush();
@@ -234,8 +229,8 @@ export function useComposer(data: AppData, date: string, actions: Pick<Actions, 
     try {
       const result = await postJson<{ messages: ChatMessage[] }>("/api/chat", { id, text, ...(images.length ? { images } : {}), pendingMessageId: reply?.kind === "ask" ? reply.pendingId : null });
       identity.current = null;
-      handle(result.messages[1]);
-      await actions.reload().catch(() => toast("已保存，但刷新失败，稍后会自动更新"));
+      const ids = handle(result.messages[1]);
+      await actions.reload().then(() => saved(ids), () => toast("已保存，但刷新失败，稍后会自动更新"));
       return true;
     } catch (cause) {
       if (cause instanceof TypeError && images.length) {
@@ -251,7 +246,7 @@ export function useComposer(data: AppData, date: string, actions: Pick<Actions, 
       setReply({ kind: "error", text: cause instanceof Error ? cause.message : "发送失败，文字已保留。" });
       return false;
     } finally { setSending(false); }
-  }, [actions, data.today, date, handle, reply, sending, toast]);
+  }, [actions, data.today, date, handle, reply, saved, sending, toast]);
 
   return { send, sending, reply, setReply, outbox, flush };
 }
@@ -313,6 +308,7 @@ function Composer() {
           placeholder={reply?.kind === "ask" ? "回答上面的问题…" : photos.length ? "补充说明（可不写）" : data.activeSession ? "又一组 8次…" : "记一笔，或拍照…"}
           onChange={event => setDraft(event.target.value)} enterKeyHint="send"
           onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
+        {draft && !sending && <button type="button" className="clear" aria-label="清除输入" onClick={() => { setDraft(""); inputRef.current?.focus(); }}><X /></button>}
         <button className="send" aria-label="发送" disabled={sending || reading || (!draft.trim() && !photos.length)}>{sending ? <LoaderCircle className="spin" /> : <ArrowUp />}</button>
       </form>
     </div>

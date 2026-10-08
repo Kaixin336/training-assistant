@@ -36,6 +36,7 @@ const fieldLimits: Record<HealthDayField, { min: number; max: number; positive?:
   exerciseMin: { min: 0, max: 1440 },
   waistCm: { min: 0, max: 300, positive: true },
   wristTempC: { min: 25, max: 45, positive: true },
+  basalEnergyKcal: { min: 0, max: 10000 },
 };
 
 export class HealthImportError extends Error {

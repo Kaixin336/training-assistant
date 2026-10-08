@@ -6,7 +6,7 @@ import { useApp } from "./context";
 import { phaseLabels, unitLabel, unitTags } from "./labels";
 import { dayLabel, exerciseList, fmt, LOADED, measureLabels, nextStep, phaseComparison, sessionText, sessionValue, signed, type ExerciseInfo, type Measure } from "./metrics";
 import { Empty, Note, Screen, Section, Segmented, Sheet, useNav, useToast } from "./ui";
-import { PlateauNotes, StrengthStandards } from "./insights-ui";
+import { useStrengthMarks } from "./insights-ui";
 
 export function StrengthList() {
   const { data } = useApp();
@@ -15,7 +15,8 @@ export function StrengthList() {
   const comparisons = exercises.map(e => ({ e, c: phaseComparison(e.sessions, data.settings, e.measure) }));
   const counted = comparisons.filter(x => x.c);
   const kept = counted.filter(x => x.c!.tone === "good").length, held = counted.filter(x => x.c!.tone === "hold").length, care = counted.filter(x => x.c!.tone === "care").length;
-  return <Screen root title="力量" kicker={<><span className={`phase-dot ${data.settings.phase}`} />同动作、同口径比较</>}>
+  const { levels, stalls } = useStrengthMarks();
+  return <Screen root title="力量" kicker={data.settings.phase !== "unspecified" ? <><span className={`phase-dot ${data.settings.phase}`} />{phaseLabels[data.settings.phase]}</> : undefined}>
     {counted.length > 0 && <div className="hero">
       <div className="hero-label">{phaseLabels[data.settings.phase]}以来 · {counted.length} 个动作</div>
       <div className="chips">
@@ -24,11 +25,9 @@ export function StrengthList() {
         {care > 0 && <span className="chip hot">疼痛 {care}</span>}
       </div>
     </div>}
-    <StrengthStandards />
-    <PlateauNotes />
     {exercises.length ? <Section title="动作" meta={`${exercises.length} 个`}>
       <div className="list">{comparisons.map(({ e, c }) => <button key={e.id} className="list-row" onClick={() => nav.push({ screen: "exercise", params: { id: e.id } })}>
-        <div><div className="list-title">{e.name}{unitTags[e.unit] && <> <span className="tag">{unitTags[e.unit]}</span></>}</div><div className="list-sub">{e.sessions.length} 次 · 上次 {dayLabel(e.last)}</div></div>
+        <div><div className="list-title">{e.name}{unitTags[e.unit] && <> <span className="tag">{unitTags[e.unit]}</span></>}{levels.get(e.id) && <> <span className="tag">{levels.get(e.id)!.level}</span></>}{stalls.get(e.id) && <> <span className={`tag ${stalls.get(e.id)!.tone === "care" ? "hot" : ""}`}>{stalls.get(e.id)!.tone === "care" ? "下降" : "停滞"}</span></>}</div><div className="list-sub">{e.sessions.length} 次 · 上次 {dayLabel(e.last)}</div></div>
         <Sparkline values={e.values.slice(-10)} />
         <div className="list-value"><strong>{fmt(e.values.at(-1) ?? null, e.measure === "reps" ? 0 : 1)}<span className="list-unit">{e.measure === "reps" ? "次" : "kg"}</span></strong><small className={c ? c.tone === "good" && Math.abs(c.ratio - 1) >= .01 ? "up" : c.tone === "care" ? "hot" : "" : ""}>{c ? Math.abs(c.ratio - 1) < .01 ? "持平" : c.short : e.measure === "reps" ? "总次数" : "估算 1RM"}</small></div>
       </button>)}</div>
@@ -44,6 +43,7 @@ export function ExerciseDetail({ id }: { id: string }) {
   const [measureChoice, setMeasure] = useState<Measure>("e1rm");
   const [range, setRange] = useState<Range>("all");
   const [renaming, setRenaming] = useState(false);
+  const marks = useStrengthMarks();
   if (!exercise) return <Screen title="动作" back="力量" large={false}><Empty title="这个动作没有记录了">可能已被合并或撤销。</Empty></Screen>;
   const loaded = LOADED.has(exercise.unit);
   const measure: Measure = loaded ? measureChoice : "reps";
@@ -74,6 +74,8 @@ export function ExerciseDetail({ id }: { id: string }) {
     <LineChart points={points} unit={unit} digits={digits} phases={phases} emptyText="这个范围内没有记录" />
     <div style={{ marginTop: 12 }}><Segmented label="时间范围" value={range} onChange={setRange} options={[{ value: "3m", label: "3 个月" }, { value: "1y", label: "1 年" }, { value: "all", label: "全部" }]} /></div>
     {advice && <Note tone={advice.tone}>{advice.text}</Note>}
+    {marks.stalls.get(id) && <Note tone={marks.stalls.get(id)!.tone}>{marks.stalls.get(id)!.text}</Note>}
+    {marks.levels.get(id) && <p className="verdict">力量水平：{marks.levels.get(id)!.level}（{marks.levels.get(id)!.ratio.toFixed(2)} 倍体重）{marks.levels.get(id)!.next ? `，估算 1RM 到 ${marks.levels.get(id)!.next!.kg} kg 是「${marks.levels.get(id)!.next!.level}」` : ""}。</p>}
     {comparison && <Note tone={comparison.tone}>{comparison.text}</Note>}
     <div className="btn-row" style={{ marginTop: 18 }}><button className="btn primary" onClick={() => actions.compose(`${exercise.name} ${prefix}`)}>记一组</button></div>
     <Section title="历史" meta={measure === "e1rm" ? "Epley 公式，仅 1–12 次的组" : undefined}>

@@ -3,7 +3,8 @@ import type { AppData, LogItem, Settings } from "@/lib/domain";
 import type { useComposer } from "./today";
 import type { Route } from "./ui";
 
-export type Tab = "today" | "strength" | "weekly" | "body" | "me";
+/** The five tabs, plus 设置 ("me"), which opens from the gear and has no tab of its own. */
+export type Tab = "today" | "diet" | "strength" | "body" | "weekly" | "me";
 export type Actions = {
   edit: (item: LogItem) => void;
   undo: (ids: string[]) => Promise<void>;

@@ -8,6 +8,7 @@ import { unitTags } from "./labels";
 import { dayLabel, fmt, setText, signed } from "./metrics";
 import { Empty, Note, Screen, Section } from "./ui";
 import { LoadAndCycle, MuscleVolume, TrainingCalendar } from "./insights-ui";
+import { dayBalance } from "@/lib/insights";
 
 export function WeeklyScreen() {
   const { data, actions } = useApp();
@@ -20,16 +21,21 @@ export function WeeklyScreen() {
   const { current, previous, changes } = report;
   const proteinPerKg = current.protein.value !== null && current.weight.value ? current.protein.value / current.weight.value : null;
   const cells: { label: string; value: string; unit?: string; delta: string }[] = [
-    { label: "训练天数", value: fmt(current.training.days, 0), delta: changes.trainingDays === null ? "上周 —" : `上周 ${fmt(previous.training.days, 0)}` },
-    { label: "工作组", value: fmt(current.training.workingSets, 0), delta: changes.workingSets === null ? "—" : `${signed(changes.workingSets, 0)} 组` },
-    { label: "总次数", value: fmt(current.training.totalReps, 0), delta: changes.totalReps === null ? "—" : `${signed(changes.totalReps, 0)} 次` },
-    { label: "体重均值", value: fmt(current.weight.value, 1), unit: "kg", delta: changes.weight === null ? `${current.weight.days} 天有记录` : `${signed(changes.weight, 2)} kg` },
-    { label: "睡眠均值", value: fmt(current.health.sleepH.value, 1), unit: "h", delta: current.health.sleepH.value === null || previous.health.sleepH.value === null ? `${current.health.sleepH.days} 天有记录` : `${signed(current.health.sleepH.value - previous.health.sleepH.value, 1)} h` },
-    { label: "蛋白质均值", value: fmt(current.protein.value, 0), unit: "g", delta: proteinPerKg !== null ? `${proteinPerKg.toFixed(1)} g/kg 体重` : `${current.protein.days} 天完整记录` },
+    { label: "训练", value: fmt(current.training.days, 0), unit: "天", delta: changes.trainingDays === null ? " " : `上周 ${fmt(previous.training.days, 0)}` },
+    { label: "工作组", value: fmt(current.training.workingSets, 0), delta: changes.workingSets === null ? " " : `${signed(changes.workingSets, 0)}` },
+    { label: "体重", value: fmt(current.weight.value, 1), unit: "kg", delta: changes.weight === null ? " " : `${signed(changes.weight, 2)}` },
   ];
+  // Average daily energy balance over the week's complete days.
+  const balances = Array.from({ length: report.period.days }, (_, i) => addDays(report.period.start, i)).filter(d => d < data.today).map(d => dayBalance(data.items, d, data.today)).filter((b): b is NonNullable<typeof b> => !!b);
+  const avgDiff = balances.length ? Math.round(balances.reduce((n, b) => n + b.diff, 0) / balances.length / 10) * 10 : 0;
+  const quiet = [
+    current.health.sleepH.value !== null ? `睡眠 ${fmt(current.health.sleepH.value, 1)} h` : "",
+    current.protein.value !== null ? `蛋白质 ${fmt(current.protein.value, 0)} g${proteinPerKg !== null ? `（${proteinPerKg.toFixed(1)} g/kg）` : ""}` : "",
+    current.training.totalReps ? `${fmt(current.training.totalReps, 0)} 次` : "",
+    balances.length >= 3 ? `日均${avgDiff <= 0 ? "缺口" : "盈余"} ${Math.abs(avgDiff).toLocaleString("zh-CN")} kcal` : "",
+  ].filter(Boolean).join(" · ");
   const exercises = report.exerciseComparisons.filter(e => e.current);
   const dropped = report.exerciseComparisons.filter(e => !e.current && e.previous);
-  const notes = [...new Set([report.phase.message, ...report.phase.focus])].filter(Boolean);
   return <Screen root title="周报" kicker={<>{preview ? "本周至今" : "完整一周"} · {current.recordedDays}/{report.period.days} 天有记录</>}>
     <div className="week" style={{ gridTemplateColumns: "44px 1fr 44px" }}>
       <button className="week-nav" aria-label="上一周" onClick={() => setWeeksBack(weeksBack + 1)}><ChevronLeft /></button>
@@ -37,11 +43,11 @@ export function WeeklyScreen() {
       <button className="week-nav" aria-label={weeksBack === 1 ? "本周至今" : "下一周"} disabled={thisWeek} onClick={() => setWeeksBack(weeksBack - 1)}><ChevronRight /></button>
     </div>
     <div className="summary">{cells.map(c => <div key={c.label}><div className="summary-label">{c.label}</div><div className="summary-value">{c.value}{c.unit && c.value !== "—" && <small>{c.unit}</small>}</div><div className="summary-delta">{c.delta}</div></div>)}</div>
-    <p className="footnote flush">{preview ? `与上周相同的 ${report.period.days} 天对比。` : "与前一个完整周对比。"}没记录的日子不算作 0。</p>
-    <TrainingCalendar />
+    {quiet && <p className="quiet">{quiet}</p>}
+    <TrainingCalendar week={report.period.start} />
     <AiReview report={report} enabled={data.aiEnabled} onConnect={() => actions.openTab("me", { screen: "ai" })} />
     <MuscleVolume from={report.period.start} to={report.period.end} />
-    {exercises.length > 0 ? <Section title="动作对比" meta={`${exercises.length} 个`}>{exercises.map(e => <ExerciseCompare key={e.key} item={e} />)}</Section>
+    {exercises.length > 0 ? <Section title="动作" meta={preview ? "与上周同期" : "与上周"}>{exercises.map(e => <ExerciseCompare key={e.key} item={e} />)}</Section>
       : <Empty title="这周没有力量记录">{preview ? "练完记下来，这里会和上周同一动作对比。" : "换一周看看。"}</Empty>}
     {dropped.length > 0 && <p className="footnote flush">上周做过、这周没做：{dropped.map(e => e.name).join("、")}</p>}
     {report.pain.records.length > 0 && <Section title="疼痛">
@@ -49,25 +55,23 @@ export function WeeklyScreen() {
       <Note tone="care">{report.pain.message}</Note>
     </Section>}
     {weeksBack <= 1 && <LoadAndCycle />}
-    {notes.length > 0 && <Section title="阶段">{notes.map((n, i) => <p key={i} className="footnote flush">{n}</p>)}</Section>}
+
   </Screen>;
 }
 
 function ExerciseCompare({ item }: { item: ExerciseComparison }) {
-  const latest = item.latest, prior = item.previousLatest;
-  return <div className="exercise">
-    <div className="exercise-head"><span className="exercise-name">{item.name}</span>{unitTags[item.unit] && <span className="tag">{unitTags[item.unit]}</span>}{item.current?.sessions.some(s => s.pain) && <span className="tag hot">疼痛</span>}</div>
-    <div className="compare">
-      <div><div className="compare-label">本周{latest ? ` · ${dayLabel(latest.date)}` : ""}</div><div className="compare-sets">{latest ? latest.sets.filter(s => !s.isWarmup).map(s => setText(s, item.unit)).join("  ") : "—"}</div></div>
-      <div><div className="compare-label">上周{prior ? ` · ${dayLabel(prior.date)}` : ""}</div><div className="compare-sets">{prior ? prior.sets.filter(s => !s.isWarmup).map(s => setText(s, item.unit)).join("  ") : "—"}</div></div>
-    </div>
-    <div className="chips" style={{ marginTop: 8 }}>
-      {item.delta.topWeight !== null && item.delta.topWeight !== 0 && <span className={`chip ${item.delta.topWeight > 0 ? "up" : "down"}`}>最重 {signed(item.delta.topWeight, 1)} kg</span>}
-      {item.delta.totalReps !== null && item.delta.totalReps !== 0 && <span className={`chip ${item.delta.totalReps > 0 ? "up" : "down"}`}>次数 {signed(item.delta.totalReps, 0)}</span>}
-      {item.delta.workingSets !== null && item.delta.workingSets !== 0 && <span className="chip">组数 {signed(item.delta.workingSets, 0)}</span>}
-    </div>
-    <p className="footnote flush">{item.observation}</p>
-  </div>;
+  const { actions } = useApp();
+  const latest = item.latest;
+  const sets = latest ? latest.sets.filter(s => !s.isWarmup).map(s => setText(s, item.unit)) : [];
+  const { topWeight, totalReps } = item.delta;
+  const change = topWeight ? { text: `${signed(topWeight, 1)} kg`, tone: topWeight > 0 ? "up" : "down" }
+    : totalReps ? { text: `${signed(totalReps, 0)} 次`, tone: totalReps > 0 ? "up" : "down" }
+    : item.previousLatest ? { text: "持平", tone: "" } : { text: "新", tone: "" };
+  return <button className="cmp" onClick={() => item.exerciseId && actions.openTab("strength", { screen: "exercise", params: { id: item.exerciseId } })}>
+    <span className="cmp-name">{item.name}{unitTags[item.unit] && <span className="tag">{unitTags[item.unit]}</span>}{item.current?.sessions.some(s => s.pain) && <span className="tag hot">疼痛</span>}</span>
+    <span className={`cmp-change ${change.tone}`}>{change.text}</span>
+    <span className="cmp-sets">{sets.join("  ") || "—"}</span>
+  </button>;
 }
 
 function AiReview({ report, enabled, onConnect }: { report: WeeklySummary; enabled: boolean; onConnect: () => void }) {

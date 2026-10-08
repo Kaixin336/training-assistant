@@ -27,7 +27,7 @@ self.addEventListener("fetch", event => {
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   if (request.mode === "navigate" && url.pathname === "/") {
     event.respondWith(fetch(request).catch(async () =>
-      (await caches.match("/offline.html")) || new Response("请连接网络后重新打开训练助手。", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } })
+      (await caches.match("/offline.html")) || new Response("请连接网络后重新打开训记。", { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } })
     ));
   } else if (ASSETS.includes(url.pathname)) {
     event.respondWith(caches.match(url.pathname).then(cached => cached || fetch(request)));

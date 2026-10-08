@@ -1,5 +1,5 @@
 /*
- * 训练助手 design system — a training logbook, not a chat app.
+ * 训记 design system — a training logbook, not a chat app.
  * Warm paper, ink, one signal accent reserved for live state and primary actions.
  * Numbers are tabular everywhere; structure comes from hairlines and spacing, not boxes.
  */
@@ -117,6 +117,9 @@ a.row { text-decoration: none; }
 .row.danger .row-title { color: var(--down); }
 .row-input { width: 110px; text-align: right; border: 0; outline: 0; background: transparent; font-size: 16px; color: var(--ink); font-variant-numeric: tabular-nums; padding: 0; }
 .row-input::placeholder { color: var(--ink-3); }
+/* iOS shows dates as “2026年10月8日”: wide enough for one line, never wrapped. */
+.row-input[type="date"] { width: 9.5em; flex-shrink: 0; white-space: nowrap; }
+.row-input[type="date"]::-webkit-date-and-time-value { text-align: right; white-space: nowrap; }
 .row select.row-input { appearance: none; -webkit-appearance: none; direction: rtl; }
 .footnote { font-size: 13px; color: var(--ink-3); line-height: 1.5; padding: 8px 16px 0; }
 .footnote.flush { padding-left: 0; padding-right: 0; }
@@ -399,9 +402,6 @@ button.stat:active { background: var(--fill); }
 .meal-slot { display: inline-block; min-width: 34px; margin-right: 8px; font-size: 12px; font-weight: 650; color: var(--ink-3); }
 .meter { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--fill); overflow: hidden; }
 .meter span { display: block; height: 100%; border-radius: 2px; background: var(--ink-2); }
-.target { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px; padding: 8px 10px; border-radius: 10px; background: var(--fill); font-size: 13px; line-height: 1.45; }
-.target.good { background: color-mix(in srgb, var(--up) 10%, var(--fill)); }
-.target.care { background: color-mix(in srgb, var(--down) 10%, var(--fill)); }
 
 /* Insight cards: strength levels, calendar, muscle bars, load, verdict */
 button.link { padding: 0; margin-left: 4px; font-size: inherit; }
@@ -436,3 +436,86 @@ button.link { padding: 0; margin-left: 4px; font-size: inherit; }
 .bar-band { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--up) 16%, transparent); }
 .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--ink-3); }
 .bar-fill.ok { background: var(--up); } .bar-fill.mid { background: var(--ink-2); } .bar-fill.high { background: var(--warn); }
+
+/* Calm pass: one-line meals, one-line state, one-line targets, reminders inside the numbers */
+.stat.due .stat-label::after { content: ""; display: inline-block; width: 5px; height: 5px; margin-left: 5px; border-radius: 50%; background: var(--accent); vertical-align: 2px; }
+.stat.due.empty .stat-value { color: var(--accent-text); font-size: 16px; font-weight: 600; padding-top: 3px; }
+.meal { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: baseline; gap: 10px; width: 100%; padding: 11px 0; text-align: left; border-top: .5px solid var(--line); }
+.section > .meal:first-of-type { border-top: 0; }
+.meal:active { background: var(--fill); }
+.meal .meal-slot { margin: 0; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--ink-3); }
+.meal-text { font-size: 14.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meal-text.real { color: var(--ink); font-weight: 500; }
+.meal-kcal { font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.meal-hint { margin-top: 6px; font-size: 12px; color: var(--ink-3); }
+.state { display: flex; gap: 10px; align-items: flex-start; width: 100%; margin-top: 14px; padding: 11px 13px; border-radius: 13px; background: var(--fill); text-align: left; font-size: 13.5px; line-height: 1.5; }
+.state-dot { width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--up); flex-shrink: 0; }
+.state.fair .state-dot { background: var(--warn); } .state.low .state-dot { background: var(--down); }
+.state-main { display: flex; flex-direction: column; color: var(--ink-2); }
+.state-main strong { color: var(--ink); font-weight: 600; }
+.state-more { margin-top: 4px; font-size: 12.5px; color: var(--ink-3); }
+.target { display: flex; gap: 8px; align-items: baseline; margin: 2px 0 6px; font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.target > span { font-size: 11px; font-weight: 650; color: var(--accent-text); letter-spacing: .02em; }
+.target.care > span { color: var(--down); }
+.quiet { margin-top: 10px; font-size: 12.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.cmp { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; width: 100%; padding: 12px 0; text-align: left; border-top: .5px solid var(--line); }
+.section > .cmp:first-of-type { border-top: 0; }
+.cmp:active { background: var(--fill); }
+.cmp-name { font-size: 15.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cmp-change { font-size: 13px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; align-self: center; }
+.cmp-change.up { color: var(--up); } .cmp-change.down { color: var(--down); }
+.cmp-sets { grid-column: 1 / -1; font-family: var(--mono); font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.more-link { display: block; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--accent-text); }
+.line { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: .5px solid var(--line); font-size: 14.5px; }
+.section > .line:first-of-type { border-top: 0; }
+.line .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--up); flex-shrink: 0; }
+.line .dot.hold { background: var(--warn); } .line .dot.care { background: var(--down); }
+.line-label { color: var(--ink-2); }
+.line-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.line-note { margin: -4px 0 6px 17px; font-size: 12.5px; line-height: 1.5; color: var(--ink-3); }
+.verdict { margin-top: 10px; font-size: 13.5px; line-height: 1.55; color: var(--ink-2); }
+.verdict.hold { color: var(--warn); }
+.clear { width: 26px; height: 26px; margin-bottom: 5px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; background: var(--fill-2); color: var(--ink-2); }
+.clear svg { width: 14px; height: 14px; stroke-width: 2.4; }
+.clear:active { transform: scale(.9); }
+/* Meals as a small nutrition table */
+.nut { display: grid; font-variant-numeric: tabular-nums; }
+.nut-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px 36px 36px 38px; align-items: first baseline; gap: 6px; width: 100%; padding: 9px 0; text-align: left; border-top: .5px solid var(--line); font-size: 14px; }
+.nut-row > span:not(:first-child) { text-align: right; }
+.nut-head { padding: 0 0 6px; border-top: 0; font-size: 11px; color: var(--ink-3); font-weight: 600; }
+button.nut-row:active { background: var(--fill); }
+.nut-meal { display: flex; gap: 8px; min-width: 0; align-items: baseline; }
+.nut-meal b { flex: 0 0 30px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.nut-meal i { font-style: normal; color: var(--ink-2); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; font-size: 13.5px; }
+.nut-row.real .nut-meal i { color: var(--ink); font-weight: 500; }
+.nut-total { font-weight: 650; border-top: .5px solid var(--line-strong); }
+.nut-target { padding-top: 2px; border-top: 0; font-size: 12.5px; color: var(--ink-3); }
+.balance { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: var(--fill); font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.balance strong { font-size: 15px; color: var(--ink); }
+.balance.good strong { color: var(--up); } .balance.hold strong { color: var(--warn); }
+/* 设置 opens from the gear like a pushed page: no tab bar there. */
+.app.tab-me .tabbar { display: none; }
+.app.tab-me .screen { padding-bottom: calc(env(safe-area-inset-bottom) + 40px); }
+/* 今天 → 饮食: the day's food as one line */
+.hub { display: flex; align-items: center; gap: 12px; width: 100%; padding: 2px 0 4px; text-align: left; }
+.hub:active { opacity: .6; }
+.hub-main { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.hub-main strong { font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
+.hub-main small { font-size: 13px; color: var(--ink-2); margin-left: 2px; }
+.hub-sub { display: block; font-size: 12.5px; color: var(--ink-3); margin-top: 1px; }
+.hub-value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hub-value.good { color: var(--up); } .hub-value.hold { color: var(--warn); }
+/* 饮食: the week as balance bars that double as the day picker */
+.dbar { position: relative; width: 6px; height: 28px; border-radius: 3px; background: var(--fill); overflow: hidden; }
+.dbar i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 3px; background: var(--ink-3); transition: height .2s; }
+.dbar i.good { background: var(--up); } .dbar i.hold { background: var(--warn); } .dbar i.est { opacity: .45; }
+.week-note { margin-top: 6px; text-align: center; font-size: 12.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.macros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.macro-label { display: block; font-size: 12px; color: var(--ink-2); }
+.macro-value { display: block; margin-top: 1px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.macro-value small { font-size: 12px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
+.macro-track { display: block; height: 4px; margin-top: 7px; border-radius: 2px; background: var(--fill); overflow: hidden; }
+.macro-track i { display: block; height: 100%; border-radius: 2px; background: var(--ink); }
+.macro-track i.over { background: var(--warn); }
+.balance.pending { color: var(--ink-3); }
+.balance.pending span:last-child { font-size: 12.5px; }

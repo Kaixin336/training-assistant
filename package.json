@@ -60,14 +60,14 @@
     "esbuild": "^0.28.0"
   },
   "type": "module",
-  "description": "私人训练助手：一句话或拍照记录训练、饮食和身体数据，自动整理力量进步、周报和恢复状态。",
+  "description": "训记：一句话或拍照记录训练、饮食和身体数据，自动算热量缺口、整理力量进步、周报和恢复状态。",
   "cloudflare": {
     "bindings": {
       "OWNER_ACCESS_KEY": {
         "description": "你的**访问口令**：自己设一串至少 20 个字符的字母数字（记下来，以后用它登录 App）。"
       },
       "DEEPSEEK_API_KEY": {
-        "description": "**DeepSeek API key**（以 `sk-` 开头），用于 AI 记录和拍照识别。没有可以先留空，之后在 App 的“设置 › AI 助手”里填。"
+        "description": "**DeepSeek API key**（以 `sk-` 开头），用于 AI 记录和拍照识别。没有可以先留空，之后在 App 右上角“齿轮 › AI 助手”里填。"
       }
     }
   }

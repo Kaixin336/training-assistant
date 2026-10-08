@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addDays, DEFAULT_SETTINGS, type DietPlan, type Food, type LogItem, type Settings, type Workout } from "../lib/domain";
 import { calibratePlan, dayType, planMeals, withPlannedMeals } from "../lib/diet";
-import { deloadAdvice, dietReview, energyBalance, musclesOf, muscleSets, personalRecords, plateaus, readiness, strengthLevel, trainingLoad } from "../lib/insights";
+import { dailyExpenditure, dayBalance, deloadAdvice, dietReview, energyBalance, musclesOf, muscleSets, personalRecords, plateaus, readiness, strengthLevel, trainingLoad } from "../lib/insights";
 
 // A plan as the AI would store it: shared breakfast, different lunch/dinner on training and rest days.
 const PLAN: DietPlan = {
@@ -135,4 +135,78 @@ test("a plan read from a photo is calibrated so each kind of day adds up to its 
   assert.equal(fixed.meals[0].kcal, 615, "the shared breakfast keeps its estimate");
   const adjusted = planMeals("rest", { ...settings, dietPlan: fixed, dietAdjustKcal: -120 });
   assert.equal(adjusted.reduce((n, m) => n + m.kcal, 0), TARGETS.rest.kcal - 120, "a review adjustment is spread over lunch and dinner");
+});
+
+test("daily expenditure: the Watch's total, scaled to what the weight trend says was burned", () => {
+  const items: LogItem[] = [];
+  // Weight falls 0.5 kg/week on the plan's rest days (1900 kcal): the trend says ~2450 kcal burned per day.
+  for (let d = 30; d >= 1; d--) {
+    const date = addDays("2026-10-08", -d);
+    items.push(weigh(date, 80 - (30 - d) * 0.5 / 7));
+    // The Watch reads about 10% high.
+    items.push(health(date, { basalEnergyKcal: 1750, activeEnergyKcal: 950 }));
+  }
+  const all = withPlannedMeals(items, withPlan("2026-09-01"), "2026-10-08");
+  const yesterday = dailyExpenditure(all, "2026-10-07", "2026-10-08")!;
+  assert.equal(yesterday.estimate, false);
+  assert.ok(Math.abs(yesterday.kcal - 2450) <= 30, `calibrated ${yesterday.kcal}`);
+  const balance = dayBalance(all, "2026-10-07", "2026-10-08")!;
+  assert.equal(balance.intake, 1900); assert.ok(balance.diff < -500 && balance.diff > -600);
+  assert.equal(dailyExpenditure(all, "2026-10-08", "2026-10-08")!.estimate, true, "today is not over");
+  // Without weight history the Watch is used as it is.
+  const watchOnly = [health("2026-10-07", { basalEnergyKcal: 1700, activeEnergyKcal: 600 })];
+  assert.equal(dailyExpenditure(watchOnly, "2026-10-07", "2026-10-08")!.kcal, 2300);
+  // Synced by the 22:00 run (09:00 UTC in NZ summer time): resting energy is scaled up to the whole day.
+  const lateSync: LogItem[] = [{ ...health("2026-10-07", { basalEnergyKcal: 1650, activeEnergyKcal: 600 }), createdAt: "2026-10-07T09:00:00.000Z" }];
+  assert.equal(dailyExpenditure(lateSync, "2026-10-07", "2026-10-08")!.kcal, 2400);
+  assert.equal(dailyExpenditure([], "2026-10-07", "2026-10-08"), null);
+});
+
+test("fat and carbs are calibrated with the plan and carried by implied meals", () => {
+  const withMacros: DietPlan = { ...PLAN, targets: { training: { kcal: 2100, protein: 148, fat: 59, carbs: 235 }, rest: { kcal: 1900, protein: 143, fat: 59, carbs: 191 } },
+    meals: PLAN.meals.map(m => ({ ...m, fat: 20, carbs: 70 })) };
+  const fixed = calibratePlan(withMacros);
+  for (const type of ["training", "rest"] as const) {
+    const meals = planMeals(type, { ...settings, dietPlan: fixed });
+    assert.equal(meals.reduce((n, m) => n + (m.fat ?? 0), 0), withMacros.targets[type].fat);
+    assert.equal(meals.reduce((n, m) => n + (m.carbs ?? 0), 0), withMacros.targets[type].carbs);
+  }
+  const food = withPlannedMeals([], { ...settings, dietPlan: { ...fixed, startDate: "2026-10-08" } }, "2026-10-08").find(i => i.kind === "food");
+  assert.ok(food && food.kind === "food" && food.fat === 20 && food.carbs === 70, "breakfast keeps its own macros");
+});
+
+test("a reported change swaps only the same kind of food in that meal", () => {
+  const plan: DietPlan = { ...PLAN, startDate: "2026-10-08", meals: [
+    { slot: "早餐", day: "both", text: "鸡蛋 2 个、燕麦 60g、牛奶 250ml、香蕉 1 个", kcal: 600, protein: 32, fat: 20, carbs: 75 },
+    { slot: "午餐", day: "both", text: "鸡腿 200g、米饭 250g、西兰花 200g、酸奶 150g", kcal: 820, protein: 56, fat: 26, carbs: 94 },
+    { slot: "晚餐", day: "both", text: "三文鱼 150g、红薯 250g、混合蔬菜 200g", kcal: 680, protein: 40, fat: 21, carbs: 75 },
+  ] };
+  const s: Settings = { ...settings, dietPlan: plan };
+  const food = (time: string, description: string, values: Partial<Food> = {}): Food => ({ ...base, id: `f${++n}`, date: "2026-10-08", kind: "food", description, calories: null, protein: null, isEstimate: true, time, ...values });
+  const day = (items: LogItem[]) => withPlannedMeals(items, s, "2026-10-08").filter((i): i is Food => i.kind === "food");
+  const planned = (foods: Food[], slot: string) => foods.find(f => f.id.startsWith("plan-") && f.time === slot);
+
+  // Only the meat reported, no values and no `replaces` (how a basic record looks): the rest of lunch stays.
+  const lunch = food("午餐", "鸡胸肉 180g");
+  // The AI's form: values for the new part only, naming the plan part it replaces.
+  const dinner = food("晚餐", "鸡胸肉 200g", { calories: 240, protein: 46, fat: 5, carbs: 0, replaces: ["三文鱼 150g"] });
+  // One part skipped.
+  const milk = food("早餐", "没吃：牛奶 250ml", { calories: 0, protein: 0, fat: 0, carbs: 0, replaces: ["牛奶 250ml"] });
+  const foods = day([lunch, dinner, milk]);
+  const restOfLunch = planned(foods, "午餐")!, filled = foods.find(f => f.id === lunch.id)!;
+  assert.equal(restOfLunch.description, "米饭 250g、西兰花 200g、酸奶 150g", "only the meat is swapped out");
+  assert.ok(filled.calories! > 150 && filled.calories! < 250 && filled.protein! > 30 && filled.isEstimate, "missing values are estimated from the food table");
+  assert.ok(restOfLunch.calories! + filled.calories! > 600 && restOfLunch.calories! + filled.calories! < 900, "lunch stays a whole lunch");
+  assert.ok(restOfLunch.carbs! >= 90, "the rice's carbs are kept");
+  assert.equal(planned(foods, "晚餐")!.description, "红薯 250g、混合蔬菜 200g");
+  assert.equal(planned(foods, "早餐")!.description, "鸡蛋 2 个、燕麦 60g、香蕉 1 个");
+  assert.ok(planned(foods, "早餐")!.calories! < 600 && planned(foods, "早餐")!.calories! > 400, "the skipped milk comes off breakfast");
+
+  // A dish the table doesn't know, or `replaces: "all"`, stands in for the whole meal.
+  assert.equal(planned(day([food("午餐", "火锅", { calories: 1200, protein: 50 })]), "午餐"), undefined);
+  assert.equal(planned(day([food("午餐", "鸡胸肉 200g、米饭 200g", { calories: 470, protein: 50, replaces: "all" })]), "午餐"), undefined);
+  // Something added to a meal without replacing anything leaves the plan meal whole.
+  assert.equal(planned(day([food("午餐", "苹果 1 个", { calories: 80, protein: 0, replaces: [] })]), "午餐")!.calories, 820);
+  // The AI's earlier form — the complete changed meal — still replaces every part.
+  assert.equal(planned(day([food("午餐", "鸡胸肉 180g、米饭 250g、西兰花 200g、酸奶 150g", { calories: 780, protein: 60 })]), "午餐"), undefined);
 });

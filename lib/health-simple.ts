@@ -10,9 +10,10 @@ import { parseShortcutTime, WORKOUT_SAMPLE_KEYS } from "./workout-detect";
 const fields = {
   steps: ["steps", "步数"], weightKg: ["weight", "weightKg", "体重"], activeEnergyKcal: ["activeEnergy", "activeEnergyKcal", "活动能量"],
   waistCm: ["waist", "waistCm", "腰围"], restingHeartRate: ["restingHeartRate", "静息心率"], hrvMs: ["hrv", "hrvMs"], exerciseMin: ["exerciseMinutes", "exerciseMin"], sleepH: ["sleep", "sleepH", "睡眠"],
-  wristTempC: ["wristTemp", "wristTempC", "手腕温度"],
+  wristTempC: ["wristTemp", "wristTempC", "手腕温度"], basalEnergyKcal: ["basalEnergy", "basalEnergyKcal", "静息能量"],
 } as const;
 const simpleKeys: string[] = Object.values(fields).flat();
+const KJ = 4.184;
 // Raw heart-rate/energy/step samples used to rebuild the day's workouts (lib/workout-detect.ts).
 const workoutKeys: string[] = Object.values(WORKOUT_SAMPLE_KEYS).flat();
 // Last night's sleep as stage samples ("睡眠分析", grouped by nothing): stage, start and end of each.
@@ -53,6 +54,39 @@ export function describeSimpleBody(body: Record<string, unknown>): string {
     .map(([key, value]) => `${key}=${show(value)}`).join("，");
 }
 
+const LABELS: Record<keyof typeof fields, string> = {
+  steps: "步数", weightKg: "体重", activeEnergyKcal: "活动能量", waistCm: "腰围", restingHeartRate: "静息心率", hrvMs: "HRV",
+  exerciseMin: "运动分钟", sleepH: "睡眠", wristTempC: "手腕温度", basalEnergyKcal: "静息能量",
+};
+/**
+ * Fields the Shortcut sends that hold nothing today ("静息能量" without the Watch on). Listed in the reply so a
+ * newly added field can be confirmed as wired up before it has data.
+ */
+export function emptyFields(body: Record<string, unknown>): string[] {
+  return fieldReport(body).empty;
+}
+
+/** Every field the Shortcut is wired to send, split into those with data today and those without. */
+export function fieldReport(body: Record<string, unknown>): { filled: string[]; empty: string[] } {
+  const blank = (value: unknown, key: string) => {
+    if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) return true;
+    const first = Array.isArray(value) ? value[0] : typeof value === "string" ? value.split("\n")[0] : value;
+    try { const r = reading(first, key); return !r || !(r.value > 0); } catch { return false; }
+  };
+  const filled: string[] = [], empty: string[] = [];
+  for (const field of Object.keys(fields) as (keyof typeof fields)[]) {
+    const key = fields[field].find(k => k in body);
+    if (key === undefined) continue;
+    const derived = field === "activeEnergyKcal" && typeof body.kcal === "string" && body.kcal.trim();
+    (blank(body[key], key) && !derived ? empty : filled).push(LABELS[field]);
+  }
+  const stage = SLEEP_KEYS.stage.find(k => k in body);
+  if (stage && !filled.includes("睡眠") && !empty.includes("睡眠")) (blank(body[stage], stage) ? empty : filled).push("睡眠");
+  const hr = WORKOUT_SAMPLE_KEYS.hr.find(k => k in body);
+  if (hr) (blank(body[hr], hr) ? empty : filled).push("心率（运动识别）");
+  return { filled, empty };
+}
+
 /** Hours asleep from stage samples: the union of core/deep/REM/asleep intervals; awake and in-bed time excluded. */
 export function sleepFromSamples(body: Record<string, unknown>, today: string): number | null {
   const pick = (keys: string[]) => keys.map(k => body[k]).find(v => v !== undefined && v !== null && v !== "");
@@ -69,8 +103,18 @@ export function sleepFromSamples(body: Record<string, unknown>, today: string): 
   }
   if (!intervals.length) return null;
   intervals.sort((a, b) => a[0] - b[0]);
-  let total = 0, [from, to] = intervals[0];
-  for (const [start, end] of intervals.slice(1)) { if (start <= to) to = Math.max(to, end); else { total += to - from; [from, to] = [start, end]; } }
+  // The card may cover several days ("开始日期 是最近 2 天"): group stages into nights (gaps under 2 h) and keep
+  // the ones that ended today — last night, including its stages before midnight, plus any nap today.
+  const nights: [number, number][][] = [];
+  for (const interval of intervals) {
+    const night = nights.at(-1);
+    if (night && interval[0] - Math.max(...night.map(i => i[1])) <= 2 * 36e5) night.push(interval); else nights.push([interval]);
+  }
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Auckland" });
+  const kept = nights.filter(night => day.format(new Date(Math.max(...night.map(i => i[1])))) === today).flat();
+  if (!kept.length) return null;
+  let total = 0, [from, to] = kept[0];
+  for (const [start, end] of kept.slice(1)) { if (start <= to) to = Math.max(to, end); else { total += to - from; [from, to] = [start, end]; } }
   total += to - from;
   const hours = Math.round(total / 36e5 * 100) / 100;
   return hours > 0 && hours <= 24 ? hours : null;
@@ -95,8 +139,20 @@ export function simpleHealthPayload(body: Record<string, unknown>, today: string
     if (field === "sleepH" && /min|分钟/i.test(r.text)) value = Math.round(value / 60 * 100) / 100;
     if (field === "steps") value = Math.round(value);
     if (field === "hrvMs" || field === "restingHeartRate") value = Math.round(value);
-    if (field === "wristTempC") value = Math.round(value * 100) / 100;
+    if (field === "wristTempC") {
+      // A card left on 华氏度 sends °F; a value that still isn't a body temperature is skipped, not fatal.
+      if (/°?F\b|℉|华氏/i.test(r.text) || value > 60) value = (value - 32) * 5 / 9;
+      if (value < 25 || value > 45) continue;
+      value = Math.round(value * 100) / 100;
+    }
+    // A Health card left on 千焦 sends kilojoules.
+    if ((field === "basalEnergyKcal" || field === "activeEnergyKcal") && /kj|千焦/i.test(r.text)) value = Math.round(value / KJ);
     day[field] = value;
+  }
+  // Without a daily active-energy field, the workout-detection energy samples (today's, ungrouped) add up to it.
+  if (day.activeEnergyKcal === undefined && typeof body.kcal === "string") {
+    const total = body.kcal.split("\n").reduce((n, line) => n + (Number(line.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0]) || 0) / (/kj|千焦/i.test(line) ? KJ : 1), 0);
+    if (total > 0 && total < 20000) day.activeEnergyKcal = Math.round(total);
   }
   const sleep = sleepFromSamples(body, today);
   if (sleep !== null && day.sleepH === undefined) day.sleepH = sleep;

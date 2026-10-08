@@ -129,7 +129,8 @@ export function samplesFrom(values: unknown, times: unknown, label: string, toda
   if (valueLines.length !== timeLines.length) throw new HealthImportError(`${label}收到 ${valueLines.length} 个数值、${timeLines.length} 个时间，对不上。请让两个字段选同一个“健康样本”，一个取“值”，一个取“开始日期”。`);
   const samples: Sample[] = [];
   for (let i = 0; i < valueLines.length; i++) {
-    const value = Number(valueLines[i].replace(/,/g, "").match(/-?\d+(?:\.\d+)?/)?.[0]);
+    // Energy cards left on 千焦 send kilojoules; everything here works in kcal.
+    const value = Number(valueLines[i].replace(/,/g, "").match(/-?\d+(?:\.\d+)?/)?.[0]) / (/kj|千焦/i.test(valueLines[i]) ? 4.184 : 1);
     const at = parseShortcutTime(timeLines[i], today);
     if (at === null) throw new HealthImportError(`${label}的时间看不懂：“${timeLines[i].slice(0, 40)}”。`);
     if (Number.isFinite(value)) samples.push({ at, value });

@@ -107,13 +107,16 @@ export const setText = (s: WorkingSet, unit: string) => `${unit === "bodyweight"
 export const sessionText = (w: Workout) => working(w).map(s => setText(s, w.unit)).join("  ") || "—";
 
 /** Bodyweight trend: 7-day mean now vs the 7 days before, as kg and % per week. */
-export function weightTrend(items: LogItem[], today: string) {
-  const series = metricSeries(items, "weight");
+export function weightTrend(items: LogItem[], today: string) { return metricTrend(items, today, "weight", 2); }
+/** The same for any measurement; waist is measured about twice a week, so one reading per week is enough. */
+export function metricTrend(items: LogItem[], today: string, metric: Metric["metric"], minPoints: number) {
+  const series = metricSeries(items, metric);
   const window = (end: string) => series.filter(p => p.date > addDays(end, -7) && p.date <= end);
   const now = window(today), before = window(addDays(today, -7));
   const mean = (rows: { value: number }[]) => rows.length ? rows.reduce((n, r) => n + r.value, 0) / rows.length : null;
   const a = mean(now), b = mean(before);
-  return { series, avg: a, latest: series.at(-1) ?? null, perWeek: a !== null && b !== null && now.length >= 2 && before.length >= 2 ? a - b : null, pct: a !== null && b !== null && now.length >= 2 && before.length >= 2 ? (a - b) / b * 100 : null };
+  const enough = a !== null && b !== null && now.length >= minPoints && before.length >= minPoints;
+  return { series, avg: a, latest: series.at(-1) ?? null, perWeek: enough ? a! - b! : null, pct: enough ? (a! - b!) / b! * 100 : null };
 }
 
 /** Gentle reminders shown only while the app is open. */

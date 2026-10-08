@@ -9,7 +9,7 @@ export const MAX_HEALTH_SAMPLES = 30000;
 export type HealthImportSource = "apple-shortcuts" | "health-auto-export";
 export type HealthDayField =
   | "steps" | "sleepH" | "weightKg" | "activeEnergyKcal"
-  | "restingHeartRate" | "hrvMs" | "exerciseMin" | "waistCm" | "wristTempC";
+  | "restingHeartRate" | "hrvMs" | "exerciseMin" | "waistCm" | "wristTempC" | "basalEnergyKcal";
 
 export interface ShortcutHealthDay {
   date: string;
@@ -23,6 +23,7 @@ export interface ShortcutHealthDay {
   waistCm?: number | null;
   /** Overnight wrist temperature (absolute °C); compared with the personal baseline. */
   wristTempC?: number | null;
+  basalEnergyKcal?: number | null;
 }
 
 export interface ShortcutHealthWorkout {
@@ -46,6 +47,8 @@ export interface HealthConnectionStatus {
   lastSyncAt: string | null;
   itemCount: number;
   tokenConfigured: boolean;
+  /** What the last Shortcut sync sent: fields with data today and fields wired up but empty. */
+  fields?: { at: string; filled: string[]; empty: string[] } | null;
 }
 
 export interface HealthTokenResponse {
@@ -63,5 +66,5 @@ export interface HealthImportReceipt {
 
 export const HEALTH_FIELD_LABELS: Record<HealthDayField, string> = {
   steps: "步数", sleepH: "睡眠", weightKg: "体重", activeEnergyKcal: "活动能量",
-  restingHeartRate: "静息心率", hrvMs: "心率变异性", exerciseMin: "运动分钟数", waistCm: "腰围", wristTempC: "手腕温度",
+  restingHeartRate: "静息心率", hrvMs: "心率变异性", exerciseMin: "运动分钟数", waistCm: "腰围", wristTempC: "手腕温度", basalEnergyKcal: "静息能量",
 };

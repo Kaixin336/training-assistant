@@ -31,6 +31,8 @@ export function EditSheet({ item, onClose, onSave, onUndo }: { item: LogItem; on
         <div className="grid-2">
           <label className="field"><span className="field-label">热量 kcal</span><input className="input num" type="number" inputMode="numeric" value={draft.calories ?? ""} onChange={e => update("calories", num(e.target.value))} /></label>
           <label className="field"><span className="field-label">蛋白质 g</span><input className="input num" type="number" inputMode="decimal" value={draft.protein ?? ""} onChange={e => update("protein", num(e.target.value))} /></label>
+          <label className="field"><span className="field-label">脂肪 g</span><input className="input num" type="number" inputMode="decimal" value={draft.fat ?? ""} onChange={e => update("fat", num(e.target.value))} /></label>
+          <label className="field"><span className="field-label">碳水 g</span><input className="input num" type="number" inputMode="decimal" value={draft.carbs ?? ""} onChange={e => update("carbs", num(e.target.value))} /></label>
         </div>
         <label className="check"><input type="checkbox" checked={draft.isEstimate} onChange={e => update("isEstimate", e.target.checked)} />营养数值是估算的</label>
       </>}

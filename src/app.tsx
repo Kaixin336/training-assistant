@@ -1,13 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChartNoAxesColumn, Dumbbell, LoaderCircle, NotebookPen, PersonStanding, Settings2 } from "lucide-react";
+import { ChartNoAxesColumn, Dumbbell, LoaderCircle, NotebookPen, PersonStanding, UtensilsCrossed } from "lucide-react";
 import type { AppData, LogItem, Settings } from "@/lib/domain";
 import { AUTH_LOST, api, postJson, storageGet, storageSet } from "./api";
 import { AppContext, type Actions, type AppState, type Tab } from "./context";
 import { EditSheet } from "./edit-sheet";
-import { TodayScreen, useComposer } from "./today";
+import { placesOf, TodayScreen, useComposer } from "./today";
 import { NavContext, ToastProvider, useToast, type Route } from "./ui";
 import { watchSystemTheme } from "./theme";
 
+const DietScreen = lazy(() => import("./diet").then(m => ({ default: m.DietScreen })));
+const PlanScreen = lazy(() => import("./diet").then(m => ({ default: m.PlanScreen })));
 const StrengthList = lazy(() => import("./strength").then(m => ({ default: m.StrengthList })));
 const ExerciseDetail = lazy(() => import("./strength").then(m => ({ default: m.ExerciseDetail })));
 const WeeklyScreen = lazy(() => import("./weekly").then(m => ({ default: m.WeeklyScreen })));
@@ -20,7 +22,6 @@ const PhaseScreen = lazy(() => settings().then(m => ({ default: m.PhaseScreen })
 const GoalsScreen = lazy(() => settings().then(m => ({ default: m.GoalsScreen })));
 const AiScreen = lazy(() => settings().then(m => ({ default: m.AiScreen })));
 const HealthScreen = lazy(() => settings().then(m => ({ default: m.HealthScreen })));
-const DietScreen = lazy(() => settings().then(m => ({ default: m.DietScreen })));
 const DataScreen = lazy(() => settings().then(m => ({ default: m.DataScreen })));
 const InstallScreen = lazy(() => settings().then(m => ({ default: m.InstallScreen })));
 
@@ -64,7 +65,7 @@ function Login({ onSignedIn }: { onSignedIn: () => void }) {
   }
   return <form className="login" onSubmit={submit}>
     <img className="login-mark" src="/icons/icon-192.png" alt="" />
-    <h1>训练助手</h1>
+    <h1>训记</h1>
     <p>你的私人训练记录。</p>
     {/* The hidden username lets iCloud Keychain remember the passphrase for this site. */}
     <input type="text" name="username" autoComplete="username" value="me" readOnly hidden />
@@ -75,14 +76,16 @@ function Login({ onSignedIn }: { onSignedIn: () => void }) {
   </form>;
 }
 
-const tabs: { id: Tab; label: string; Icon: typeof NotebookPen; root: Route }[] = [
-  { id: "today", label: "今天", Icon: NotebookPen, root: { screen: "today" } },
-  { id: "strength", label: "力量", Icon: Dumbbell, root: { screen: "list" } },
-  { id: "weekly", label: "周报", Icon: ChartNoAxesColumn, root: { screen: "weekly" } },
-  { id: "body", label: "身体", Icon: PersonStanding, root: { screen: "body" } },
-  { id: "me", label: "设置", Icon: Settings2, root: { screen: "settings" } },
+/* 今天 is where everything is recorded; the other tabs read the same data back, each answering one question. */
+const tabs: { id: Exclude<Tab, "me">; label: string; Icon: typeof NotebookPen }[] = [
+  { id: "today", label: "今天", Icon: NotebookPen },
+  { id: "diet", label: "饮食", Icon: UtensilsCrossed },
+  { id: "strength", label: "力量", Icon: Dumbbell },
+  { id: "body", label: "身体", Icon: PersonStanding },
+  { id: "weekly", label: "周报", Icon: ChartNoAxesColumn },
 ];
-const initialStacks = () => Object.fromEntries(tabs.map(t => [t.id, [t.root]])) as Record<Tab, Route[]>;
+const roots: Record<Tab, Route> = { today: { screen: "today" }, diet: { screen: "diet" }, strength: { screen: "list" }, body: { screen: "body" }, weekly: { screen: "weekly" }, me: { screen: "settings" } };
+const initialStacks = () => Object.fromEntries(Object.entries(roots).map(([id, root]) => [id, [root]])) as Record<Tab, Route[]>;
 
 function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   const toast = useToast();
@@ -119,19 +122,24 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
   const routeKey = `${tab}:${stacks[tab].length}:${route.screen}:${JSON.stringify(route.params ?? {})}`;
   useLayoutEffect(() => { window.scrollTo(0, route.scroll ?? 0); }, [routeKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const remember = (stack: Route[]) => stack.map((r, i) => i === stack.length - 1 ? { ...r, scroll: window.scrollY } : r);
-  const nav = useMemo(() => ({
-    push: (next: Route) => setStacks(s => ({ ...s, [tab]: [...remember(s[tab]), { ...next, scroll: 0 }] })),
-    pop: () => setStacks(s => ({ ...s, [tab]: s[tab].length > 1 ? s[tab].slice(0, -1) : s[tab] })),
-  }), [tab]);
+  // 设置 is entered from the gear and left with 返回 to wherever it was opened from.
+  const settingsFrom = useRef<Tab>("today");
   const openTab = useCallback((next: Tab, to?: Route) => {
     setStacks(s => {
       const saved = { ...s, [tab]: remember(s[tab]) };
       if (!to) return saved;
-      const rootRoute = tabs.find(t => t.id === next)!.root;
+      const rootRoute = roots[next];
       return { ...saved, [next]: to.screen === rootRoute.screen ? [rootRoute] : [rootRoute, { ...to, scroll: 0 }] };
     });
-    setTab(next); storageSet("kai-tab", next);
+    if (next === "me" && tab !== "me") settingsFrom.current = tab;
+    setTab(next); if (next !== "me") storageSet("kai-tab", next);
   }, [tab]);
+  const atRoot = stacks[tab].length <= 1;
+  const nav = useMemo(() => ({
+    push: (next: Route) => setStacks(s => ({ ...s, [tab]: [...remember(s[tab]), { ...next, scroll: 0 }] })),
+    pop: () => tab === "me" && atRoot ? setTab(settingsFrom.current) : setStacks(s => ({ ...s, [tab]: s[tab].length > 1 ? s[tab].slice(0, -1) : s[tab] })),
+    settings: () => openTab("me", roots.me),
+  }), [tab, atRoot, openTab]);
   const selectTab = (next: Tab) => {
     if (next === tab) { if (stacks[tab].length > 1) setStacks(s => ({ ...s, [tab]: [s[tab][0]] })); else window.scrollTo({ top: 0, behavior: "smooth" }); return; }
     openTab(next);
@@ -158,7 +166,8 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
 
   // Must keep a stable identity: the composer's effects depend on it, and a fresh object each render
   // made every reload trigger another reload (an endless /api/data loop).
-  const composerActions = useMemo(() => ({ undo, reload }), [undo, reload]);
+  const placed = useCallback((ids: string[]) => placesOf((known.current?.items ?? []).filter(i => ids.includes(i.id))), []);
+  const composerActions = useMemo(() => ({ undo, reload, placed }), [undo, reload, placed]);
   const composer = useComposer(data ?? emptyData, date || data?.today || "", composerActions);
   const compose = useCallback((text: string) => {
     openTab("today"); setDraft(text);
@@ -192,6 +201,8 @@ function renderRoute(tab: Tab, route: Route) {
   const p = route.params ?? {};
   switch (`${tab}:${route.screen}`) {
     case "today:today": return <TodayScreen />;
+    case "diet:diet": return <DietScreen />;
+    case "diet:plan": return <PlanScreen />;
     case "strength:list": return <StrengthList />;
     case "strength:exercise": return <ExerciseDetail key={p.id} id={p.id} />;
     case "weekly:weekly": return <WeeklyScreen />;
@@ -203,7 +214,6 @@ function renderRoute(tab: Tab, route: Route) {
     case "me:goals": return <GoalsScreen />;
     case "me:ai": return <AiScreen />;
     case "me:health": return <HealthScreen />;
-    case "me:diet": return <DietScreen />;
     case "me:data": return <DataScreen />;
     case "me:install": return <InstallScreen />;
     default: return <TodayScreen />;

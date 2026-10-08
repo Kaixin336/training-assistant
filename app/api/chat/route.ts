@@ -2,7 +2,7 @@ import {z} from "zod";
 import {owner,loadData,json,failure,commit,recordStatement,messageStatement,changeStatement,receipt,AppError} from "@/lib/server-store";
 import {interpret} from "@/lib/ai";
 import {db} from "@/lib/server-store";
-import {itemSummary,settingsSchema,type ChatMessage,type PlanChange} from "@/lib/domain";
+import {dayDiff,itemSummary,settingsSchema,type ChatMessage,type PlanChange} from "@/lib/domain";
 import {planMeals} from "@/lib/diet";
 import {prepareTrainingRecords,finishTrainingSession} from "@/lib/training-sessions";
 import {personalRecords} from "@/lib/insights";
@@ -50,6 +50,11 @@ export async function POST(request:Request){try{
    statements.push(db().prepare("UPDATE profiles SET settings=? WHERE owner=?").bind(JSON.stringify(settings),user));
    const day=(type:"training"|"rest")=>`${type==="training"?"训练日":"休息日"} ${result.plan.targets[type].kcal} kcal / 蛋白质 ${result.plan.targets[type].protein} g：${planMeals(type,settings).map(m=>`${m.slot}${m.kcal}`).join("、")}`;
    assistant.text=["已设置饮食计划「"+result.plan.name+"」，从 "+result.plan.startDate+" 起每天默认按计划算，吃了别的再告诉我。",day("training"),day("rest"),result.reply].filter(Boolean).join("\n");
+  }else if(result.type==="plan_start"&&data.settings.dietPlan){
+   // Days from the new start without their own food records now count the plan's meals.
+   const settings=settingsSchema.parse({...data.settings,dietPlan:{...data.settings.dietPlan,startDate:result.startDate}});
+   statements.push(db().prepare("UPDATE profiles SET settings=? WHERE owner=?").bind(JSON.stringify(settings),user));
+   assistant.text=[`饮食计划改成从 ${result.startDate} 开始，今天是第 ${dayDiff(data.today,result.startDate)+1} 天。这之间没单独记饮食的日子，都按计划算。`,result.reply].filter(Boolean).join("\n");
   }else if(result.type==="proposal"){
    const change:PlanChange={id:crypto.randomUUID(),createdAt,request:combined,summary:result.summary,before:data.plan,after:result.after,status:"proposed",baseVersion:data.planVersion,note:result.note};
    assistant.text=`请确认这个计划变更：${result.summary}`;assistant.proposalId=change.id;statements.push(changeStatement(user,change));

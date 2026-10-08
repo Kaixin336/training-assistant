@@ -214,7 +214,16 @@ test('the minimal iOS Shortcut body syncs today with a plain-text reply', async 
   assert.match(await (await shortcut({ steps: { Value: 9001, Unit: 'count' } })).text(), /步数 9,001/, 'sample dictionaries are read whatever the key case');
   const zeroWaist = await shortcut({ steps: '19398 count', weight: 0, waist: '' });
   assert.equal(zeroWaist.status, 200, 'an empty metric sent as 0 or blank is skipped');
-  assert.doesNotMatch(await zeroWaist.text(), /体重|腰围/);
+  const zeroText = await zeroWaist.text();
+  assert.doesNotMatch(zeroText, /体重：|腰围：/);
+  assert.match(zeroText, /已连上、今天还没有数据：体重、腰围/, 'wired-up fields without data are named, so a new field can be checked');
+  assert.match(await (await shortcut({ steps: '5000', basalEnergy: '', sleepStage: '' })).text(), /今天还没有数据：静息能量、睡眠/);
+  const sent = (await (await call('/api/health/status')).json() as { fields: { filled: string[]; empty: string[] } }).fields;
+  assert.deepEqual(sent, { ...sent, filled: ['步数'], empty: ['静息能量', '睡眠'] }, 'the last sync\'s fields are kept for the Apple 健康 page');
+  assert.match(await (await shortcut({ basalEnergy: '7,000 kJ' })).text(), /静息消耗 1673 kcal/, 'a card left on 千焦 is converted');
+  assert.match(await (await shortcut({ wristTemp: '96.1 °F' })).text(), /手腕温度 35\.6°C/, 'a card left on 华氏度 is converted');
+  const odd = await shortcut({ steps: '6000', wristTemp: '0.4' });
+  assert.equal(odd.status, 200, 'an implausible wrist temperature is skipped instead of failing the sync');
   const rotated = await (await post('/api/health/token', { rotate: true })).json() as { token: string };
   assert.notEqual(rotated.token, first.token);
   assert.equal((await shortcut({ steps: 1 })).status, 401, 'the old token stops working');
@@ -300,8 +309,9 @@ test('a diet plan sent to the AI becomes the plan, calibrated to its daily targe
     if (!String(input).startsWith('https://api.deepseek.com/')) return realFetch(input, init);
     const dietPlan = { name: '她的减脂计划', targets: { training: { kcal: 1700, protein: 110 }, rest: { kcal: 1500, protein: 105 } }, rules: ['少油少盐'],
       meals: [{ slot: '早餐', day: 'both', text: '燕麦 50g、鸡蛋 2 个', kcal: 400, protein: 25 }, { slot: '午餐', day: 'training', text: '米饭 150g、鸡胸 150g', kcal: 700, protein: 50 }, { slot: '晚餐', day: 'training', text: '红薯 200g、虾仁 150g', kcal: 500, protein: 40 }, { slot: '午餐', day: 'both', text: '米饭 100g、鸡胸 150g', kcal: 600, protein: 45 }, { slot: '晚餐', day: 'rest', text: '蔬菜沙拉、豆腐', kcal: 450, protein: 30 }] };
-    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ intent: 'diet_plan', reply: '整理好了。', dietPlan }) }, finish_reason: 'stop' }] }));
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(nextReply ?? { intent: 'diet_plan', reply: '整理好了。', dietPlan }) }, finish_reason: 'stop' }] }));
   }) as typeof fetch;
+  let nextReply: object | null = null;
   const before = (await data()).settings;
   try {
     env.DEEPSEEK_API_KEY = 'sk-environment-test-key-0000000000';
@@ -315,6 +325,15 @@ test('a diet plan sent to the AI becomes the plan, calibrated to its daily targe
     assert.equal(todayMeals.length, 3);
     const total = todayMeals.reduce((n, f) => n + (f.kind === 'food' ? f.calories ?? 0 : 0), 0);
     assert.ok(total === 1700 || total === 1500, `today's implied meals add up to a target (${total})`);
+    // "I've been on it six days": the AI moves the start back and the days since count the plan's meals.
+    const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 5); const sixDays = d.toISOString().slice(0, 10);
+    nextReply = { intent: 'plan_start', startDate: sixDays, reply: '好的。' };
+    const moved = await chat('这个饮食计划我已经执行六天了');
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+    assert.match(moved.body.messages![1].text, /今天是第 6 天/);
+    const later = await data();
+    assert.equal(later.settings.dietPlan?.startDate, sixDays);
+    assert.equal(later.items.filter(i => i.kind === 'food' && i.id.startsWith(`plan-${sixDays}-`)).length, 3, 'the first day now has the plan meals');
   } finally {
     globalThis.fetch = realFetch; delete env.DEEPSEEK_API_KEY;
     // Put the previous settings back for the tests that follow.
@@ -379,6 +398,17 @@ test('the weekly iCloud backup link reads an export without plan meals; morning 
   assert.equal(res.status, 200, await res.clone().text());
   const text = await res.text();
   for (const part of [/睡眠 6\.5 小时/, /静息心率 54 bpm/, /HRV 52 ms/, /手腕温度 35\.6/]) assert.match(text, part);
+  // A card set to "开始日期 是最近 2 天" also sends the night before: only the night that ended today counts,
+  // including its stages that ended before midnight.
+  const early = new Date(Date.UTC(y, m - 1, day - 2)), ey = early.getUTCFullYear(), em = early.getUTCMonth() + 1, ed = early.getUTCDate();
+  const twoNights = await (await sync({
+    sleepStage: '核心睡眠\n核心睡眠\n深度睡眠\n核心睡眠',
+    sleepStart: `${ey}/${em}/${ed} 下午11:00\n${py}/${pm}/${pd} 下午11:00\n${py}/${pm}/${pd} 下午11:50\n${y}/${m}/${day} 上午3:00`,
+    sleepEnd: `${py}/${pm}/${pd} 上午7:00\n${py}/${pm}/${pd} 下午11:50\n${y}/${m}/${day} 上午3:00\n${y}/${m}/${day} 上午6:00`,
+  })).text();
+  assert.match(twoNights, /睡眠 7 小时/);
+  const energy = await (await sync({ basalEnergy: '1712.4 kcal', kcal: ['120', '85.5', '310'].join('\n') })).text();
+  assert.match(energy, /静息消耗 1712 kcal/); assert.match(energy, /活动消耗 516 kcal/, 'daily active energy adds up the workout-detection samples');
 });
 
 test('a photo goes to the model and a Watch workout screenshot becomes one activity record', async () => {

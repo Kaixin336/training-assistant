@@ -40,7 +40,7 @@ export type RestorePlan = { exportedAt: string; settings: Settings; items: LogIt
 export function readBackup(text: string): RestorePlan {
   let value: Exported;
   try { value = JSON.parse(text) as Exported; } catch { throw new Error("这个文件不是有效的 JSON 备份。"); }
-  if (value?.format !== BACKUP_FORMAT || !Array.isArray(value.items)) throw new Error("这不是训练助手导出的备份文件。");
+  if (value?.format !== BACKUP_FORMAT || !Array.isArray(value.items)) throw new Error("这不是训记导出的备份文件。");
   const files = new Map((value.photoFiles ?? []).map(file => [file.id, file]));
   const items: LogItem[] = [], photos: RestorePlan["photos"] = []; let invalid = 0;
   for (const raw of value.items) {

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { planStart } from "@/lib/diet";
-import { DietReviewCard, PhaseVerdict } from "./insights-ui";
+import { PhaseVerdict } from "./insights-ui";
 import { Camera, Download, ImagePlus, Plus } from "lucide-react";
 import { addDays, metricLabels, type Metric, type Photo } from "@/lib/domain";
 import { api } from "./api";
 import { LineChart, Sparkline } from "./charts";
 import { useApp } from "./context";
 import { bodyPhotoKinds, phaseLabels, photoLabels } from "./labels";
-import { dayLabel, fmt, measurementSummary, signed, weightTrend } from "./metrics";
+import { dayLabel, fmt, measurementSummary, signed, weightTrend, metricTrend } from "./metrics";
 import { Empty, Note, Screen, Section, Segmented, Sheet, useNav, useToast } from "./ui";
 
 type Range = "4w" | "3m" | "all";
@@ -21,28 +21,32 @@ export function BodyScreen() {
   const { data, actions } = useApp();
   const nav = useNav();
   const [range, setRange] = useState<Range>("3m");
-  const trend = weightTrend(data.items, data.today);
+  const [shown, setShown] = useState<"weight" | "waist">("weight");
+  const waist = shown === "waist";
+  const trend = waist ? metricTrend(data.items, data.today, "waist", 1) : weightTrend(data.items, data.today);
+  const unit = waist ? "cm" : "kg";
   const from = since(data.today, range);
   const series = trend.series.filter(p => p.date >= from);
   const phases = (data.settings.phaseHistory ?? []).map(p => ({ date: p.startDate, label: phaseLabels[p.phase] }));
   const phaseStartWeight = data.settings.phaseStart ? trend.series.filter(p => p.date <= data.settings.phaseStart!).at(-1) ?? trend.series.find(p => p.date >= data.settings.phaseStart!) : undefined;
-  const sincePhase = trend.avg !== null && phaseStartWeight && phaseStartWeight.date !== trend.latest?.date ? trend.avg - phaseStartWeight.average : null;
-  const rateNote = rateAdvice(data.settings.phase, trend.pct);
+  const sincePhase = waist ? measurementSummary(data.items, "waist", data.settings).change
+    : trend.avg !== null && phaseStartWeight && phaseStartWeight.date !== trend.latest?.date ? trend.avg - phaseStartWeight.average : null;
+  const rateNote = rateAdvice(data.settings.phase, weightTrend(data.items, data.today).pct);
   const photos = data.items.filter((i): i is Photo => i.kind === "photo").sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-  return <Screen root title="身体" kicker={<><span className={`phase-dot ${data.settings.phase}`} />体重、围度和照片都是线索，不等于肌肉量</>}>
+  return <Screen root title="身体" kicker={data.settings.phase !== "unspecified" ? <><span className={`phase-dot ${data.settings.phase}`} />{phaseLabels[data.settings.phase]}</> : undefined}>
+    <div style={{ marginTop: 14 }}><Segmented label="指标" value={shown} onChange={setShown} options={[{ value: "weight", label: "体重" }, { value: "waist", label: "腰围" }]} /></div>
     <div className="hero">
-      <div className="hero-label">体重 · 7 天均值</div>
-      <div className="hero-value">{fmt(trend.avg, 1)}<span className="hero-unit">kg</span></div>
+      <div className="hero-label">{waist ? "腰围 · 最近一次" : "体重 · 7 天均值"}</div>
+      <div className="hero-value">{fmt(waist ? trend.latest?.value ?? null : trend.avg, 1)}<span className="hero-unit">{unit}</span></div>
       <div className="chips">
-        {trend.perWeek !== null && <span className="chip">每周 {signed(trend.perWeek, 2)} kg（{signed(trend.pct!, 1)}%）</span>}
-        {sincePhase !== null && <span className="chip">{phaseLabels[data.settings.phase]}以来 {signed(sincePhase, 1)} kg</span>}
-        {data.settings.weightGoal !== null && trend.avg !== null && <span className="chip">距目标 {signed(trend.avg - data.settings.weightGoal, 1)} kg</span>}
+        {trend.perWeek !== null && <span className="chip">每周 {signed(trend.perWeek, waist ? 1 : 2)} {unit}{waist ? "" : `（${signed(trend.pct!, 1)}%）`}</span>}
+        {sincePhase !== null && <span className="chip">{phaseLabels[data.settings.phase]}以来 {signed(sincePhase, 1)} {unit}</span>}
       </div>
     </div>
-    <LineChart points={series.map(p => ({ date: p.date, value: p.value }))} average={series.map(p => ({ date: p.date, value: p.average }))} unit="kg" goal={data.settings.weightGoal} phases={phases} emptyText="记几天体重后这里会出现趋势" />
-    {series.length > 0 && <div className="legend"><span><i />每天</span><span><i className="avg" />7 天均值</span></div>}
+    <LineChart points={series.map(p => ({ date: p.date, value: p.value }))} average={series.map(p => ({ date: p.date, value: p.average }))} unit={unit} goal={waist ? data.settings.waistGoal : data.settings.weightGoal} phases={phases} emptyText={waist ? "量几次腰围后这里会出现趋势" : "记几天体重后这里会出现趋势"} />
+    {series.length > 0 && <div className="legend"><span><i />{waist ? "每次测量" : "每天"}</span><span><i className="avg" />7 天均值</span></div>}
     <div style={{ marginTop: 12 }}><Segmented label="时间范围" value={range} onChange={setRange} options={ranges} /></div>
-    {planStart(data.settings) ? <DietReviewCard /> : rateNote && <Note tone={rateNote.tone}>{rateNote.text}</Note>}
+    {!planStart(data.settings) && rateNote && <Note tone={rateNote.tone}>{rateNote.text}</Note>}
     <PhaseVerdict />
     <div className="btn-row" style={{ marginTop: 16 }}><button className="btn" onClick={() => actions.compose("体重 ")}><Plus />记体重</button><button className="btn" onClick={() => actions.compose("腰围 ")}><Plus />记围度</button></div>
 
@@ -55,7 +59,6 @@ export function BodyScreen() {
           <div className="list-value"><strong>{m.latest ? fmt(m.latest.value, 1) : "—"}<small style={{ fontSize: 12, fontWeight: 500, color: "var(--ink-2)" }}>{m.latest ? " cm" : ""}</small></strong><small>{m.change !== null ? `${signed(m.change, 1)} cm` : " "}</small></div>
         </button>;
       })}</div>
-      <p className="footnote flush">每 1–2 周在相同条件下量（早上、空腹、同一位置）。减脂期腰围下降、臂围和腿围稳定，同时力量保住，是比较理想的信号。</p>
     </Section>
 
     <Section title="照片" action={{ label: photos.length ? "全部" : "添加", onClick: () => nav.push({ screen: "photos" }) }}>

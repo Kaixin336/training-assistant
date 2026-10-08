@@ -2,14 +2,14 @@ import {z} from 'zod';
 import {addDays,baseSet,dateSchema,logItemSchema,metricLabels,type AppData,type DietPlan,type LogItem,type Workout,type WorkingSet} from './domain';
 import type {Session} from './plan';
 
-export type ChatResult={type:'records';items:LogItem[];reply:string}|{type:'question'|'clarification';reply:string}|{type:'proposal';after:Session[];summary:string;note:string}|{type:'diet_plan';plan:DietPlan;reply:string};
+export type ChatResult={type:'records';items:LogItem[];reply:string}|{type:'question'|'clarification';reply:string}|{type:'proposal';after:Session[];summary:string;note:string}|{type:'diet_plan';plan:DietPlan;reply:string}|{type:'plan_start';startDate:string;reply:string};
 const n=z.number().finite().min(0).nullable().optional();
 const common={date:dateSchema,notes:z.string().max(4000).optional()};
 const set=z.object({weightKg:n,reps:n,durationSec:n,distanceM:n,notch:n,isWarmup:z.boolean().optional(),feel:z.enum(['Easy','OK','Hard']).nullable().optional(),side:z.enum(['left','right','both']).optional()}).strict();
 const drafts=z.array(z.discriminatedUnion('kind',[
  z.object({...common,kind:z.literal('workout'),exercise:z.string().min(1).max(160),unit:z.enum(['kg','kg/side','kg/hand','added kg','assisted kg','bodyweight','seconds','metres','bar height notch']),sets:z.array(set).max(80),durationMin:n,pain:z.boolean().optional(),painScore:n,painWeeks:n,painResolved:z.boolean().optional(),repMin:n,repMax:n,increment:z.string().max(180).optional()}).strict(),
  z.object({...common,kind:z.literal('metric'),metric:z.enum(['weight','waist','hips','thigh','arm']),value:z.number(),unit:z.enum(['kg','cm'])}).strict(),
- z.object({...common,kind:z.literal('food'),description:z.string().min(1).max(1000),calories:n,protein:n,isEstimate:z.boolean(),time:z.string().max(40).optional()}).strict(),
+ z.object({...common,kind:z.literal('food'),description:z.string().min(1).max(1000),calories:n,protein:n,fat:n,carbs:n,isEstimate:z.boolean(),time:z.string().max(40).optional(),replaces:z.union([z.literal('all'),z.array(z.string().max(80)).max(12)]).nullish()}).strict(),
  z.object({...common,kind:z.literal('health'),sleepH:n,steps:n,creatineTaken:z.boolean().nullable().optional(),creatineG:n,activeEnergyKcal:n,restingHeartRate:n,hrvMs:n,exerciseMin:n}).strict(),
  z.object({...common,kind:z.literal('note'),category:z.enum(['training','pain','skill','general']),text:z.string().min(1).max(4000)}).strict(),
  z.object({...common,kind:z.literal('activity'),name:z.string().min(1).max(80),durationMin:n,distanceM:n,energyKcal:n,avgHr:n,maxHr:n,effort:n}).strict()
@@ -41,7 +41,7 @@ export function validateAiRecords(input:unknown,data:AppData,source:string):LogI
    return logItemSchema.parse({...base,kind:'workout',session:'自由训练',exerciseId:exercise.id,exerciseName:exercise.name,unit:raw.unit,sets,completed:true,durationMin:raw.durationMin??null,pain:raw.pain??false,painScore:raw.painScore??null,painWeeks:raw.painWeeks??null,painResolved:raw.painResolved??false,isKeyLift:true,repMin:raw.repMin??previous?.repMin??null,repMax:raw.repMax??previous?.repMax??null,expectedSets:sets.filter(s=>!s.isWarmup&&s.side!=='right').length||null,increment:raw.increment??previous?.increment??''});
   }
   if(raw.kind==='metric')return logItemSchema.parse({...base,kind:'metric',metric:raw.metric,value:raw.value,unit:raw.unit});
-  if(raw.kind==='food')return logItemSchema.parse({...base,kind:'food',description:raw.description,calories:raw.calories??null,protein:raw.protein??null,isEstimate:raw.isEstimate,time:raw.time??''});
+  if(raw.kind==='food')return logItemSchema.parse({...base,kind:'food',description:raw.description,calories:raw.calories??null,protein:raw.protein??null,...(raw.fat!=null?{fat:raw.fat}:{}),...(raw.carbs!=null?{carbs:raw.carbs}:{}),isEstimate:raw.isEstimate,time:raw.time??'',...(raw.replaces!=null?{replaces:raw.replaces}:{})});
   if(raw.kind==='health'){
    const {date:_,notes:__,...rest}=raw;
    if(!Object.entries(raw).some(([k,v])=>!['date','notes','kind'].includes(k)&&v!=null))throw new Error('这条健康记录没有数值。');

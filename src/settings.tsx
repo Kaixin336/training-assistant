@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Bot, Check, Copy, Download, FileJson, HardDriveDownload, LogOut, Smartphone, Target, TrendingUp, UtensilsCrossed } from "lucide-react";
-import { planMeals, planOf, planTargets } from "@/lib/diet";
+import { Activity, Bot, Check, Copy, Download, FileJson, HardDriveDownload, LogOut, Smartphone, Target, TrendingUp } from "lucide-react";
 import { settingsSchema, type Settings } from "@/lib/domain";
 import { MAX_HEALTH_IMPORT_BYTES, type HealthConnectionStatus, type HealthTokenResponse } from "@/lib/health-types";
 import { api, postJson, storageGet, storageSet } from "./api";
@@ -31,11 +30,10 @@ export function SettingsScreen() {
   const backupAge = daysAgo(storageGet(LAST_BACKUP));
   const week = phaseWeek(data);
   const [theme, setTheme] = useState<ThemeChoice>(() => { const saved = storageGet("kai-theme"); return saved === "light" || saved === "dark" ? saved : "system"; });
-  return <Screen root title="设置">
+  return <Screen title="设置" back="返回">
     <Section><div className="group">
       <Row icon={<TrendingUp />} title="训练阶段" value={`${phaseLabels[data.settings.phase]}${week ? ` · 第 ${week} 周` : ""}`} chevron onClick={() => nav.push({ screen: "phase" })} />
       <Row icon={<Target />} title="个人目标" value={goals ? `${goals} 项` : "可选"} chevron onClick={() => nav.push({ screen: "goals" })} />
-      <Row icon={<UtensilsCrossed />} title="饮食计划" value={planOf(data.settings) ? `训练日 ${planTargets("training", data.settings)!.kcal} · 休息日 ${planTargets("rest", data.settings)!.kcal}` : "未设置"} chevron onClick={() => nav.push({ screen: "diet" })} />
     </div></Section>
     <Section><div className="group">
       <Row icon={<Bot />} title="AI 助手" value={data.aiEnabled ? <span className="up">已连接</span> : "未连接"} chevron onClick={() => nav.push({ screen: "ai" })} />
@@ -117,33 +115,6 @@ export function GoalsScreen() {
       <Segmented label="力量标准" value={form.strengthSex ?? "none"} onChange={value => setForm(prev => ({ ...prev, strengthSex: value === "none" ? null : value }))} options={[{ value: "male", label: "男性标准" }, { value: "female", label: "女性标准" }, { value: "none", label: "不显示" }]} />
     </Section>
     {error && <p className="error" style={{ marginTop: 12 }}>{error}</p>}
-  </Screen>;
-}
-
-export function DietScreen() {
-  const { data, actions } = useApp();
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const plan = planOf(data.settings), adjust = data.settings.dietAdjustKcal ?? 0;
-  async function save(next: Settings, message: string) {
-    setBusy(true);
-    try { await actions.saveSettings(next); toast(message); } catch (cause) { toast(cause instanceof Error ? cause.message : "保存失败"); } finally { setBusy(false); }
-  }
-  if (!plan) return <Screen title="饮食计划" back="设置" large={false}>
-    <Note>还没有饮食计划。把你的计划（图片或文字）发给“今天”页的 AI，并说“这是我的饮食计划”，它会整理成训练日和休息日的三餐。之后每天默认按计划算，吃了别的再告诉它。</Note>
-    <div className="btn-row" style={{ marginTop: 16 }}><button className="btn primary" onClick={() => actions.compose("这是我的饮食计划：")}>去发给 AI</button></div>
-  </Screen>;
-  return <Screen title="饮食计划" back="设置" large={false}>
-    <Section><div className="group">
-      <Row title={plan.name} sub={`${plan.startDate} 起 · 每天默认按计划吃，特殊情况在“今天”里说`} />
-      {adjust !== 0 && <Row title="复盘调整" value={`${adjust > 0 ? "+" : ""}${adjust} kcal/天`}><button className="btn small" disabled={busy} onClick={() => void save({ ...data.settings, dietAdjustKcal: 0 }, "已恢复原计划")}>恢复</button></Row>}
-    </div><p className="footnote">换新计划：把新计划发给 AI 就会替换。</p></Section>
-    {(["training", "rest"] as const).map(type => { const t = planTargets(type, data.settings)!; return <Section key={type} title={type === "training" ? "训练日" : "休息日"} meta={[`${t.kcal} kcal`, `蛋白质 ${t.protein} g`, t.fat ? `脂肪 ${t.fat} g` : "", t.carbs ? `碳水 ${t.carbs} g` : ""].filter(Boolean).join(" · ")}>
-      {planMeals(type, data.settings).map(m => <div key={m.slot} className="entry"><span className="entry-main"><span className="meal-slot">{m.slot}</span>{m.text}</span><span className="entry-value">{m.kcal} kcal<small className="faint"> · {m.protein} g</small></span></div>)}
-    </Section>; })}
-    {plan.rules.length > 0 && <Section title="规则">{plan.rules.map(rule => <p key={rule} className="footnote flush" style={{ marginBottom: 6 }}>{rule}</p>)}</Section>}
-    <p className="footnote">每餐热量是估算值，已按计划的每日目标校准。</p>
-    <button className="btn ghost" disabled={busy} onClick={() => { if (confirm("删除饮食计划？以后的日子不再自动按计划算，已经过去的日子也不再显示计划的饭。")) void save({ ...data.settings, dietPlan: null, dietAdjustKcal: 0 }, "已删除饮食计划"); }}>删除饮食计划</button>
   </Screen>;
 }
 
@@ -265,6 +236,7 @@ export function HealthScreen() {
   return <Screen title="Apple 健康" back="设置" large={false}>
     <div className="group" style={{ marginTop: 16 }}>
       <Row title="上次同步" value={status ? when(status.lastSyncAt) ?? "还没有" : "…"} />
+      {status?.fields && <Row title="收到" sub={<>{status.fields.filled.join("、") || "没有数据"}{status.fields.empty.length > 0 && <><br />已连上、当天没数据：{status.fields.empty.join("、")}</>}</>} />}
     </div>
     <a className="btn block" style={{ marginTop: 12 }} href={`shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}`}><Activity />立即同步</a>
     <p className="footnote">iPhone 不允许网页直接读取“健康”。用自带的“快捷指令”搭一次，之后每晚自动同步步数、体重和腰围。“立即同步”会运行名为“{SHORTCUT_NAME}”的快捷指令。</p>
@@ -306,10 +278,11 @@ export function HealthScreen() {
       <p className="footnote flush">都在同一个“同步健康”里加“查找健康样本”（开始日期“是今天”），再在 JSON 里加字段。新加的卡片变成“筛选”时，点 ❤️ 健康样本 › 清除变量。</p>
       <ol className="steps" style={{ marginTop: 10 }}>
         <li><strong>运动识别</strong>：心率（分组 无、限制 关）→ <code className="mono">hr</code> 取“值”、<code className="mono">hrTime</code> 取“开始日期”。可再加活动能量 <code className="mono">kcal</code>/<code className="mono">kcalTime</code>、手表步数（分组 无）<code className="mono">stepList</code>/<code className="mono">stepTime</code>。</li>
+        <li><strong>每日消耗</strong>（饮食表下面的缺口/盈余）：静息能量（分组 天）→ <code className="mono">basalEnergy</code>；活动能量（分组 天）→ <code className="mono">activeEnergy</code>。已经加了运动识别的 <code className="mono">kcal</code> 就不用再加活动能量。</li>
         <li><strong>HRV</strong>：心率变异性（分组 无、限制 关）→ <code className="mono">hrv</code>。</li>
         <li><strong>静息心率</strong>：静息心率（开始日期排序、最新的排最前、限制 1）→ <code className="mono">restingHeartRate</code>。</li>
-        <li><strong>手腕温度</strong>：手腕温度（同上，限制 1）→ <code className="mono">wristTemp</code>。需要戴表睡觉并开启睡眠专注模式。</li>
-        <li><strong>睡眠</strong>：睡眠分析，把条件改成“<strong>结束日期 是今天</strong>”（分组 无、限制 关）→ <code className="mono">sleepStage</code> 取“值”、<code className="mono">sleepStart</code> 取“开始日期”、<code className="mono">sleepEnd</code> 取“结束日期”。</li>
+        <li><strong>手腕温度</strong>：手腕温度（开始日期“是最近 2 天”，最新优先、限制 1）→ <code className="mono">wristTemp</code>。需要戴表睡觉并开启睡眠专注模式。</li>
+        <li><strong>睡眠</strong>：睡眠（也叫睡眠分析），条件用“<strong>开始日期 是最近 2 天</strong>”（分组 无、限制 关；只算今天醒来的那一觉）→ <code className="mono">sleepStage</code> 取“值”、<code className="mono">sleepStart</code> 取“开始日期”、<code className="mono">sleepEnd</code> 取“结束日期”。</li>
       </ol>
       <p className="footnote flush">有了这些，“今天”页早上会显示身体状态，周报里会显示训练负荷。哪项没加就跳过哪项。</p>
     </Section>
@@ -412,11 +385,11 @@ export function DataScreen() {
 export function InstallScreen() {
   const standalone = typeof window !== "undefined" && (window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
   return <Screen title="添加到主屏幕" back="设置" large={false}>
-    {standalone ? <Note tone="good">你正在从主屏幕图标使用训练助手。</Note> : <>
+    {standalone ? <Note tone="good">你正在从主屏幕图标使用训记。</Note> : <>
       <ol className="steps" style={{ marginTop: 20 }}>
         <li>用 iPhone 自带的 <strong>Safari</strong> 打开这个网址（微信里的浏览器不行）。</li>
         <li>点底部的 <strong>分享</strong> 按钮（方框加向上的箭头）。</li>
-        <li>选 <strong>添加到主屏幕</strong>，名称保持“训练助手”，点“添加”。</li>
+        <li>选 <strong>添加到主屏幕</strong>，名称保持“训记”，点“添加”。</li>
         <li>从主屏幕图标打开，再输入一次口令。之后 30 天内不用重新登录。</li>
       </ol>
       <p className="footnote flush" style={{ marginTop: 16 }}>不需要 App Store。需要联网；在没信号的健身房里记下的内容会先存在手机上，联网后自动发送。</p>

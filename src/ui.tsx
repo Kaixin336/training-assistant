@@ -1,13 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "radix-ui";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Settings as Gear } from "lucide-react";
 
 /* Navigation: each tab keeps its own stack, so switching tabs never loses your place. */
 export type Route = { screen: string; params?: Record<string, string>; scroll?: number };
-export const NavContext = createContext<{ push: (route: Route) => void; pop: () => void }>({ push: () => {}, pop: () => {} });
+export const NavContext = createContext<{ push: (route: Route) => void; pop: () => void; settings: () => void }>({ push: () => {}, pop: () => {}, settings: () => {} });
 export const useNav = () => useContext(NavContext);
 
-/** A screen with an iOS-style navigation bar; the large title collapses into the bar on scroll. */
+/** A screen with an iOS-style navigation bar; the large title collapses into the bar on scroll. Tab roots carry the 设置 gear. */
 export function Screen({ title, large = true, back, right, kicker, composer = false, root = false, children }: {
   title: string; large?: boolean; back?: string; right?: ReactNode; kicker?: ReactNode; composer?: boolean; root?: boolean; children: ReactNode;
 }) {
@@ -24,7 +24,7 @@ export function Screen({ title, large = true, back, right, kicker, composer = fa
     <header className={`navbar${solid ? " solid" : ""}${large ? "" : " always"}`}>
       <div className="navbar-left">{back && <button className="back" onClick={nav.pop}><ChevronLeft />{back}</button>}</div>
       <div className="navbar-title">{title}</div>
-      <div className="navbar-right">{right}</div>
+      <div className="navbar-right">{right}{root && !back && <button className="icon-btn" aria-label="设置" onClick={nav.settings}><Gear /></button>}</div>
     </header>
     {large && <>{kicker && <div className="kicker">{kicker}</div>}<h1 className="large-title">{title}</h1><div ref={sentinel} /></>}
     {children}
