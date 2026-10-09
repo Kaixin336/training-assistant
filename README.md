@@ -2,6 +2,8 @@
 
 私人训练记录 App：练完用一句话或一张照片告诉它，它自动整理成训练、饮食和身体数据，帮你看力量有没有进步、热量缺口多大、减脂或增肌的速度合不合适。数据只存在你自己的 Cloudflare 账号里，免费部署，iPhone 上可以像普通 App 一样添加到主屏幕。
 
+**📖 第一次用？先看 [《训记使用指南》](GUIDE.md)：从部署到快捷指令每一步点哪里，都写清楚了。**
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Kaixin336/training-assistant)
 
 ## 能做什么（1.0）
