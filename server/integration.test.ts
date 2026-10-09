@@ -221,6 +221,19 @@ test('the minimal iOS Shortcut body syncs today with a plain-text reply', async 
   const sent = (await (await call('/api/health/status')).json() as { fields: { filled: string[]; empty: string[] } }).fields;
   assert.deepEqual(sent, { ...sent, filled: ['步数'], empty: ['静息能量', '睡眠'] }, 'the last sync\'s fields are kept for the Apple 健康 page');
   assert.match(await (await shortcut({ basalEnergy: '7,000 kJ' })).text(), /静息消耗 1673 kcal/, 'a card left on 千焦 is converted');
+  // Energy times no longer matter (only the values add up), so a miswired kcalTime is simply ignored.
+  const [ty, tm, td] = today.split('-').map(Number);
+  const energyOnly = await shortcut({ basalEnergy: '812.4', restingHeartRate: '58', kcal: '1.2\n0.8\n1.1', kcalTime: `${ty}/${tm}/${td} 上午8:00` });
+  assert.equal(energyOnly.status, 200);
+  const energyText = await energyOnly.text();
+  assert.match(energyText, /活动消耗 3 kcal.*静息消耗 812 kcal.*静息心率 58 bpm/s);
+  assert.doesNotMatch(energyText, /没收到/);
+  // Sleep time fields left on the sample itself send the stage name: that one item is skipped, the rest
+  // syncs, and the reply says which property to pick.
+  const miswired = await (await shortcut({ steps: '100', sleepStage: 'Core', sleepStart: 'Core', sleepEnd: 'Core' })).text();
+  assert.match(miswired, /步数 100.*这几项没收到，其余已同步：\n睡眠的 sleepStart 发来的是睡眠阶段（“Core”）.*开始日期/s);
+  const warned = (await (await call('/api/health/status')).json() as { fields: { warnings?: string[] } }).fields;
+  assert.match(warned.warnings?.[0] ?? '', /sleepStart/, 'the warning is kept for the Apple 健康 page');
   assert.match(await (await shortcut({ wristTemp: '96.1 °F' })).text(), /手腕温度 35\.6°C/, 'a card left on 华氏度 is converted');
   const odd = await shortcut({ steps: '6000', wristTemp: '0.4' });
   assert.equal(odd.status, 200, 'an implausible wrist temperature is skipped instead of failing the sync');
@@ -249,39 +262,17 @@ test('history import: 60-day batches and Watch workouts with heart rate and effo
   assert.ok(watch && watch.kind === 'workout' && watch.avgHr === 128 && watch.maxHr === 165 && watch.effort === 7 && watch.exerciseId === null);
 });
 
-test('the nightly shortcut rebuilds workouts from heart-rate samples and re-syncs without duplicates', async () => {
+test('heart-rate and step samples from older Shortcuts are accepted and ignored: no guessed workouts', async () => {
   const { token } = await (await post('/api/health/token', { rotate: false })).json() as { token: string };
   const sync = (body: unknown) => call(`/api/health/import?key=${token}`, { method: 'POST', anonymous: true, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  const zoneOffset = (iso: string) => { const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Pacific/Auckland', timeZoneName: 'longOffset' }).formatToParts(new Date(iso)); return (parts.find(p => p.type === 'timeZoneName')!.value.replace('GMT', '') || '+00:00'); };
-  const local = (hhmm: string) => Date.parse(`${today}T${hhmm}:00${zoneOffset(`${today}T12:00:00Z`)}`);
-  const text = (ms: number) => { const d = new Date(ms); const p = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Pacific/Auckland', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(d); const g = (t: string) => p.find(x => x.type === t)!.value; return `${g('year')}年${g('month')}月${g('day')}日 ${g('hour')}:${g('minute')}:${g('second')}`; };
-  const samples = (until: string) => { const values: number[] = [], times: string[] = [];
-    for (let t = local('06:00'); t < local('09:00'); t += 6 * 60000) { values.push(66); times.push(text(t)); }
-    for (let t = local('07:00'); t <= local(until); t += 5000) { values.push(120 + (t / 5000) % 20); times.push(text(t)); }
-    return { hr: values.join('\n'), hrTime: times.join('\n') }; };
-  const first = await sync({ steps: '9000', ...samples('07:30') });
-  assert.equal(first.status, 200);
-  assert.match(await first.text(), /体能训练：.*30 分钟 · 平均心率 1\d\d · 最高 139/);
-  let watch = (await data()).items.filter(i => i.kind === 'workout' && i.id.startsWith('health-detected-'));
-  assert.equal(watch.length, 1);
-  const id = watch[0].id;
-  // The user renames it; a later sync with the full workout keeps the name and the id.
-  assert.equal((await post('/api/action', { operationId: crypto.randomUUID(), type: 'edit', id, item: { ...watch[0], exerciseName: '室内步行' } })).status, 200, 'a Watch workout can be renamed');
-  assert.equal((await sync(samples('07:45'))).status, 200);
-  watch = (await data()).items.filter(i => i.kind === 'workout' && i.id.startsWith('health-detected-'));
-  assert.equal(watch.length, 1, 're-sync updates instead of adding');
-  assert.ok(watch[0].kind === 'workout' && watch[0].id === id && watch[0].exerciseName === '室内步行' && watch[0].durationMin === 45);
-  // The full Health export later brings the real workout: it replaces the guess and later syncs don't guess again.
-  const real = { id: `Walking|${today} 07:00`, date: today, name: '室内步行', durationMin: 45, startedAt: new Date(local('07:00')).toISOString(), endedAt: new Date(local('07:45')).toISOString() };
-  assert.equal((await post('/api/health/import', { source: 'apple-shortcuts', workouts: [real] })).status, 200);
-  assert.equal((await data()).items.filter(i => i.id.startsWith('health-detected-')).length, 0, 'the guess gives way to the real workout');
-  assert.equal((await sync(samples('07:45'))).status, 200);
-  assert.equal((await data()).items.filter(i => i.id.startsWith('health-detected-')).length, 0);
-  // No dense stretch any more (e.g. the earlier guess was wrong): the stale guess is removed.
-  const quiet = await sync({ hr: '66\n67', hrTime: `${text(local('06:00'))}\n${text(local('06:06'))}` });
-  assert.match(await quiet.text(), /心率 2 条，没认出运动/);
-  assert.equal((await data()).items.filter(i => i.id.startsWith('health-detected-')).length, 0);
-  assert.match(await (await sync({ hr: '66\n67', hrTime: text(local('06:00')) })).text(), /没有同步：心率收到 2 个数值、1 个时间/);
+  const [y, m, d] = today.split('-').map(Number);
+  const times = Array.from({ length: 400 }, (_, i) => `${y}/${m}/${d} 上午${7 + Math.floor(i / 720)}:${String(Math.floor(i * 5 / 60) % 60).padStart(2, '0')}:${String(i * 5 % 60).padStart(2, '0')}`);
+  const res = await sync({ steps: '9000', hr: times.map(() => '130').join('\n'), hrTime: times.join('\n'), kcalTime: '1.2', stepList: '12', stepTime: times[0] });
+  assert.equal(res.status, 200);
+  const reply = await res.text();
+  assert.match(reply, /步数 9,000/);
+  assert.doesNotMatch(reply, /心率|没收到|体能训练/, 'nothing about heart rate, no warnings');
+  assert.equal((await data()).items.filter(i => i.kind === 'workout' && i.id.startsWith('health-detected-')).length, 0);
 });
 
 test('a one-click deploy needs only the passphrase: the origin and session secret are derived', async () => {
@@ -408,7 +399,7 @@ test('the weekly iCloud backup link reads an export without plan meals; morning 
   })).text();
   assert.match(twoNights, /睡眠 7 小时/);
   const energy = await (await sync({ basalEnergy: '1712.4 kcal', kcal: ['120', '85.5', '310'].join('\n') })).text();
-  assert.match(energy, /静息消耗 1712 kcal/); assert.match(energy, /活动消耗 516 kcal/, 'daily active energy adds up the workout-detection samples');
+  assert.match(energy, /静息消耗 1712 kcal/); assert.match(energy, /活动消耗 516 kcal/, 'daily active energy adds up the ungrouped samples');
 });
 
 test('a photo goes to the model and a Watch workout screenshot becomes one activity record', async () => {

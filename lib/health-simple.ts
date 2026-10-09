@@ -1,6 +1,6 @@
 import { HealthImportError } from "./health-import";
 import type { ShortcutHealthPayload } from "./health-types";
-import { parseShortcutTime, WORKOUT_SAMPLE_KEYS } from "./workout-detect";
+import { parseShortcutTime } from "./shortcut-time";
 
 /**
  * The shortest possible iOS Shortcut sends today's Health samples straight into a JSON body:
@@ -14,8 +14,10 @@ const fields = {
 } as const;
 const simpleKeys: string[] = Object.values(fields).flat();
 const KJ = 4.184;
-// Raw heart-rate/energy/step samples used to rebuild the day's workouts (lib/workout-detect.ts).
-const workoutKeys: string[] = Object.values(WORKOUT_SAMPLE_KEYS).flat();
+// Today's active-energy samples ("活动能量", grouped by nothing) add up to the day's active energy. Older
+// Shortcuts also send heart-rate and step samples for the retired workout guessing: accepted and ignored.
+const SAMPLE_KEYS = { kcal: ["kcal", "energyList"], ignored: ["kcalTime", "kcalAt", "hr", "heartRate", "心率", "hrTime", "hrAt", "心率时间", "stepList", "stepsList", "stepTime", "stepsTime", "stepAt"] };
+const workoutKeys: string[] = Object.values(SAMPLE_KEYS).flat();
 // Last night's sleep as stage samples ("睡眠分析", grouped by nothing): stage, start and end of each.
 const SLEEP_KEYS = { stage: ["sleepStage", "睡眠阶段"], start: ["sleepStart"], end: ["sleepEnd"] };
 const sleepKeys: string[] = Object.values(SLEEP_KEYS).flat();
@@ -50,7 +52,7 @@ export function describeSimpleBody(body: Record<string, unknown>): string {
   // Sample lists can be thousands of lines: report their size, not their content.
   const show = (value: unknown) => typeof value === "string" && value.includes("\n") ? `${value.split("\n").filter(Boolean).length} 行`
     : Array.isArray(value) && value.length > 1 ? `${value.length} 项` : value === undefined ? "（无）" : JSON.stringify(value).slice(0, 40);
-  return Object.entries(body).filter(([key]) => simpleKeys.includes(key) || workoutKeys.includes(key))
+  return Object.entries(body).filter(([key]) => simpleKeys.includes(key) || workoutKeys.includes(key) || sleepKeys.includes(key))
     .map(([key, value]) => `${key}=${show(value)}`).join("，");
 }
 
@@ -82,8 +84,6 @@ export function fieldReport(body: Record<string, unknown>): { filled: string[]; 
   }
   const stage = SLEEP_KEYS.stage.find(k => k in body);
   if (stage && !filled.includes("睡眠") && !empty.includes("睡眠")) (blank(body[stage], stage) ? empty : filled).push("睡眠");
-  const hr = WORKOUT_SAMPLE_KEYS.hr.find(k => k in body);
-  if (hr) (blank(body[hr], hr) ? empty : filled).push("心率（运动识别）");
   return { filled, empty };
 }
 
@@ -98,7 +98,12 @@ export function sleepFromSamples(body: Record<string, unknown>, today: string): 
   for (let i = 0; i < stages.length; i++) {
     if (/清醒|awake|在床|in ?bed/i.test(stages[i]) || !/睡|sleep|core|deep|rem|核心|深度|快速/i.test(stages[i])) continue;
     const start = parseShortcutTime(starts[i], today), end = parseShortcutTime(ends[i], today);
-    if (start === null || end === null) throw new HealthImportError(`睡眠的时间看不懂：“${(start === null ? starts[i] : ends[i]).slice(0, 40)}”。`);
+    if (start === null || end === null) {
+      const bad = start === null ? starts[i] : ends[i], field = start === null ? "sleepStart" : "sleepEnd";
+      // The usual setup slip: the variable was left on the sample itself, which sends the stage name.
+      if (/睡|sleep|core|deep|rem|awake|bed|核心|深度|快速|清醒|在床/i.test(bad)) throw new HealthImportError(`睡眠的 ${field} 发来的是睡眠阶段（“${bad.slice(0, 20)}”），不是时间：点 ${field} 右边的蓝色变量，选“${field === "sleepStart" ? "开始日期" : "结束日期"}”。`);
+      throw new HealthImportError(`睡眠的时间看不懂：“${bad.slice(0, 40)}”。`);
+    }
     if (end > start) intervals.push([start, end]);
   }
   if (!intervals.length) return null;
@@ -120,7 +125,7 @@ export function sleepFromSamples(body: Record<string, unknown>, today: string): 
   return hours > 0 && hours <= 24 ? hours : null;
 }
 
-export function simpleHealthPayload(body: Record<string, unknown>, today: string): ShortcutHealthPayload {
+export function simpleHealthPayload(body: Record<string, unknown>, today: string, warnings: string[] = []): ShortcutHealthPayload {
   const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : today;
   const day: Record<string, number | string> = { date };
   for (const [field, keys] of Object.entries(fields)) {
@@ -149,12 +154,14 @@ export function simpleHealthPayload(body: Record<string, unknown>, today: string
     if ((field === "basalEnergyKcal" || field === "activeEnergyKcal") && /kj|千焦/i.test(r.text)) value = Math.round(value / KJ);
     day[field] = value;
   }
-  // Without a daily active-energy field, the workout-detection energy samples (today's, ungrouped) add up to it.
+  // Without a daily active-energy field, today's ungrouped active-energy samples (kcal) add up to it.
   if (day.activeEnergyKcal === undefined && typeof body.kcal === "string") {
     const total = body.kcal.split("\n").reduce((n, line) => n + (Number(line.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0]) || 0) / (/kj|千焦/i.test(line) ? KJ : 1), 0);
     if (total > 0 && total < 20000) day.activeEnergyKcal = Math.round(total);
   }
-  const sleep = sleepFromSamples(body, today);
+  // Miswired sleep fields are reported and skipped; the rest of the day still syncs.
+  let sleep: number | null = null;
+  try { sleep = sleepFromSamples(body, today); } catch (cause) { if (cause instanceof HealthImportError) warnings.push(cause.message); else throw cause; }
   if (sleep !== null && day.sleepH === undefined) day.sleepH = sleep;
   return { source: "apple-shortcuts", days: Object.keys(day).length > 1 ? [day as never] : [] };
 }

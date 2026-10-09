@@ -236,7 +236,9 @@ export function HealthScreen() {
   return <Screen title="Apple 健康" back="设置" large={false}>
     <div className="group" style={{ marginTop: 16 }}>
       <Row title="上次同步" value={status ? when(status.lastSyncAt) ?? "还没有" : "…"} />
-      {status?.fields && <Row title="收到" sub={<>{status.fields.filled.join("、") || "没有数据"}{status.fields.empty.length > 0 && <><br />已连上、当天没数据：{status.fields.empty.join("、")}</>}</>} />}
+      {status?.fields?.error && <Row title="上次没同步成功" sub={status.fields.error} />}
+      {!!status?.fields?.warnings?.length && <Row title="有几项没收到" sub={status.fields.warnings.join("；")} />}
+      {status?.fields && !status.fields.error && <Row title="收到" sub={<>{status.fields.filled?.join("、") || "没有数据"}{!!status.fields.empty?.length && <><br />已连上、当天没数据：{status.fields.empty.join("、")}</>}</>} />}
     </div>
     <a className="btn block" style={{ marginTop: 12 }} href={`shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}`}><Activity />立即同步</a>
     <p className="footnote">iPhone 不允许网页直接读取“健康”。用自带的“快捷指令”搭一次，之后每晚自动同步步数、体重和腰围。“立即同步”会运行名为“{SHORTCUT_NAME}”的快捷指令。</p>
@@ -274,17 +276,16 @@ export function HealthScreen() {
         <input ref={historyInput} type="file" accept=".zip,.xml,application/zip,application/xml,text/xml" disabled={!!busy} onChange={e => void importHistory(e.target.files?.[0])} /></label>
       <p className="footnote flush">体重和腰围出现在“身体”页的曲线里，运动出现在每天的记录里。重复导入只会覆盖，不会重复；以后想补最近的运动，再导出导入一次就行。</p>
     </Section>
-    <Section title="可选 · 运动识别和早晨状态">
+    <Section title="可选 · 每日消耗和早晨状态">
       <p className="footnote flush">都在同一个“同步健康”里加“查找健康样本”（开始日期“是今天”），再在 JSON 里加字段。新加的卡片变成“筛选”时，点 ❤️ 健康样本 › 清除变量。</p>
       <ol className="steps" style={{ marginTop: 10 }}>
-        <li><strong>运动识别</strong>：心率（分组 无、限制 关）→ <code className="mono">hr</code> 取“值”、<code className="mono">hrTime</code> 取“开始日期”。可再加活动能量 <code className="mono">kcal</code>/<code className="mono">kcalTime</code>、手表步数（分组 无）<code className="mono">stepList</code>/<code className="mono">stepTime</code>。</li>
-        <li><strong>每日消耗</strong>（饮食表下面的缺口/盈余）：静息能量（分组 天）→ <code className="mono">basalEnergy</code>；活动能量（分组 天）→ <code className="mono">activeEnergy</code>。已经加了运动识别的 <code className="mono">kcal</code> 就不用再加活动能量。</li>
+        <li><strong>每日消耗</strong>（饮食表下面的缺口/盈余）：静息能量（分组 天）→ <code className="mono">basalEnergy</code>；活动能量（分组 天）→ <code className="mono">activeEnergy</code>（以前加的活动能量明细 <code className="mono">kcal</code> 也可以，会自动加总）。</li>
         <li><strong>HRV</strong>：心率变异性（分组 无、限制 关）→ <code className="mono">hrv</code>。</li>
         <li><strong>静息心率</strong>：静息心率（开始日期排序、最新的排最前、限制 1）→ <code className="mono">restingHeartRate</code>。</li>
         <li><strong>手腕温度</strong>：手腕温度（开始日期“是最近 2 天”，最新优先、限制 1）→ <code className="mono">wristTemp</code>。需要戴表睡觉并开启睡眠专注模式。</li>
         <li><strong>睡眠</strong>：睡眠（也叫睡眠分析），条件用“<strong>开始日期 是最近 2 天</strong>”（分组 无、限制 关；只算今天醒来的那一觉）→ <code className="mono">sleepStage</code> 取“值”、<code className="mono">sleepStart</code> 取“开始日期”、<code className="mono">sleepEnd</code> 取“结束日期”。</li>
       </ol>
-      <p className="footnote flush">有了这些，“今天”页早上会显示身体状态，周报里会显示训练负荷。哪项没加就跳过哪项。</p>
+      <p className="footnote flush">有了这些，“今天”页早上会显示身体状态，饮食页会显示每天的缺口。哪项没加就跳过哪项。以前为“运动识别”加的心率、步数明细字段已经不用了，留着也没关系。</p>
     </Section>
     <Section>
       <details>

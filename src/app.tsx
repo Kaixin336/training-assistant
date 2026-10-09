@@ -114,7 +114,10 @@ function Shell({ onSignedOut }: { onSignedOut: () => void }) {
     reload().catch(e => setLoadError(e.message));
     const visible = () => { if (document.visibilityState === "visible") reload().catch(() => {}); };
     document.addEventListener("visibilitychange", visible);
-    return () => document.removeEventListener("visibilitychange", visible);
+    // A sync run from outside (Action button, back tap, automation) lands while the app stays open: look for
+    // it every 20 s. Each look is one row ("unchanged"); skipped mid-workout, where reloads are full reads.
+    const poll = setInterval(() => { if (document.visibilityState === "visible" && known.current && !known.current.activeSession) reload().catch(() => {}); }, 20_000);
+    return () => { document.removeEventListener("visibilitychange", visible); clearInterval(poll); };
   }, [reload]);
 
   /* Navigation with scroll restoration per route. */

@@ -5,7 +5,7 @@ import { dayType, isPlanned, planStart, type DayType } from "@/lib/diet";
 import { dayBalance, nutritionTargets, readiness } from "@/lib/insights";
 import { useApp } from "./context";
 import { fmt, formatLoad, nextStep } from "./metrics";
-import { Section, useToast } from "./ui";
+import { FoldSection, useToast } from "./ui";
 
 export function useDayType(date: string): DayType {
   const { data } = useApp();
@@ -32,6 +32,9 @@ export function DayTypeToggle({ date }: { date: string }) {
   </button>;
 }
 
+/** Runs the “同步健康” Shortcut; coming back to the app reloads, so the synced numbers appear. */
+export const runHealthSync = () => { window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("同步健康")}`; };
+
 /** The day's food on 今天 as one line — energy, protein, balance — opening the 饮食 page for the table. */
 export function DietLink({ date }: { date: string }) {
   const { data, actions } = useApp();
@@ -44,14 +47,15 @@ export function DietLink({ date }: { date: string }) {
   const changed = foods.filter(f => !isPlanned(f)).length;
   const cutting = data.settings.phase !== "lean_gain";
   const n = (v: number) => Math.round(v).toLocaleString("zh-CN");
-  return <Section title="饮食">
+  const summary = `${n(totals.calories)} kcal · 蛋白质 ${n(totals.protein)} g${balance ? ` · ${balance.diff <= 0 ? "缺口" : "盈余"} ${n(Math.abs(balance.diff))}` : ""}`;
+  return <FoldSection id="diet" title="饮食" summary={summary}>
     <button className="hub" onClick={() => actions.openTab("diet")}>
       <span className="hub-main"><strong>{n(totals.calories)}</strong><small>{target.kcal ? ` / ${n(target.kcal)}` : ""} kcal</small>
         <span className="hub-sub">蛋白质 {n(totals.protein)} g{changed ? ` · 改了 ${changed} 处` : target.fromPlan ? " · 按计划" : ""}</span></span>
       {balance && <span className={`hub-value ${balance.diff < 0 === cutting ? "good" : "hold"}`}>{balance.diff <= 0 ? "缺口" : "盈余"} {n(Math.abs(balance.diff))}</span>}
       <ChevronRight className="row-chev" />
     </button>
-  </Section>;
+  </FoldSection>;
 }
 
 /** Morning state from HRV, resting heart rate, sleep and wrist temperature: one line, details on tap. */
@@ -107,19 +111,29 @@ export function TodayStrip({ date }: { date: string }) {
   const sleepDue = isToday && day.sleep === null && sleepSyncs;
   const tiles = [
     { label: "体重", value: day.weight === null ? null : fmt(day.weight, 1), unit: "kg", due: isToday && day.weight === null, prefill: "体重 ", record: latest(i => i.kind === "metric" && i.metric === "weight") },
-    { label: `腰围 ${waistWeek}/2`, value: lastWaist?.kind === "metric" ? fmt(lastWaist.value, 1) : null, unit: "cm", due: waistDue, prefill: "腰围 ", record: latest(i => i.kind === "metric" && i.metric === "waist") },
-    { label: "睡眠", value: day.sleep === null ? null : fmt(day.sleep, 1), unit: "h", due: sleepDue, dueText: "同步", prefill: "睡眠 ", record: latest(i => i.kind === "health" && i.sleepH !== null), run: sleepDue ? () => { window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("同步健康")}`; } : undefined },
+    // Waist is measured about twice a week, so the tile shows the latest reading and says which day it is from.
+    { label: lastWaist && lastWaist.date !== date && !waistDue ? `腰围 · ${daysAgo(date, lastWaist.date)}` : `腰围 ${waistWeek}/2`, stale: !!lastWaist && lastWaist.date !== date, value: lastWaist?.kind === "metric" ? fmt(lastWaist.value, 1) : null, unit: "cm", due: waistDue, prefill: "腰围 ", record: latest(i => i.kind === "metric" && i.metric === "waist") },
+    { label: "睡眠", value: day.sleep === null ? null : fmt(day.sleep, 1), unit: "h", due: sleepDue, dueText: "同步", prefill: "睡眠 ", record: latest(i => i.kind === "health" && i.sleepH !== null), run: sleepDue ? runHealthSync : undefined },
     { label: "步数", value: day.steps === null ? null : day.steps.toLocaleString("zh-CN"), unit: "", due: false, prefill: "步数 ", record: latest(i => i.kind === "health" && i.steps !== null) },
   ];
-  return <div className="stats">{tiles.map(t => <button key={t.label} className={`stat${t.value === null ? " empty" : ""}${t.due ? " due" : ""}`} onClick={() => "run" in t && t.run ? t.run() : t.record ? actions.edit(t.record) : actions.compose(t.prefill)}>
+  return <div className="stats">{tiles.map(t => <button key={t.label} className={`stat${t.value === null ? " empty" : ""}${t.due ? " due" : ""}${"stale" in t && t.stale ? " stale" : ""}`} onClick={() => "run" in t && t.run ? t.run() : t.record ? actions.edit(t.record) : actions.compose(t.prefill)}>
     <div className="stat-label">{t.label}</div>
     <div className="stat-value">{t.due && t.value === null ? ("dueText" in t && t.dueText) || "记一下" : t.value ?? "—"}{t.value !== null && t.unit && <span className="stat-unit">{t.unit}</span>}</div>
   </button>)}</div>;
 }
 
-/** The one reminder that is not a number on the strip: the Health sync has stopped. */
+const NZ_CLOCK = new Intl.DateTimeFormat("en-CA", { timeZone: "Pacific/Auckland", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
+/** "昨天", "周四", or "10/1" for older readings. */
+const daysAgo = (date: string, then: string) => { const n = dayDiff(date, then); return n === 1 ? "昨天" : n < 7 ? weekdayOf(then) : `${Number(then.slice(5, 7))}/${Number(then.slice(8))}`; };
+const weekdayOf = (date: string) => ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][new Date(`${date}T12:00:00Z`).getUTCDay()];
+
+/** The one reminder that is not a number on the strip: today's Health sync hasn't arrived. */
 export function planCheckIns(data: AppData) {
   const out: { key: string; label: string }[] = [];
-  if (data.healthLastSync && Date.now() - Date.parse(data.healthLastSync) > 36 * 3600_000) out.push({ key: "sync", label: `健康数据 ${Math.floor((Date.now() - Date.parse(data.healthLastSync)) / 86400_000)} 天没同步 · 立即同步` });
+  if (!data.healthLastSync) return out;
+  const parts = Object.fromEntries(NZ_CLOCK.formatToParts(new Date(data.healthLastSync)).map(p => [p.type, p.value]));
+  const lastDay = `${parts.year}-${parts.month}-${parts.day}`, hour = +Object.fromEntries(NZ_CLOCK.formatToParts(new Date()).map(p => [p.type, p.value])).hour;
+  const days = dayDiff(data.today, lastDay);
+  if (days >= 1 && hour >= 6) out.push({ key: "sync", label: days > 1 ? `健康数据 ${days} 天没同步 · 点这里同步` : "今天还没同步健康数据 · 点这里同步" });
   return out;
 }

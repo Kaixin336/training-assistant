@@ -48,7 +48,7 @@ export interface HealthConnectionStatus {
   itemCount: number;
   tokenConfigured: boolean;
   /** What the last Shortcut sync sent: fields with data today and fields wired up but empty. */
-  fields?: { at: string; filled: string[]; empty: string[] } | null;
+  fields?: { at: string; filled?: string[]; empty?: string[]; error?: string; sent?: string; warnings?: string[] } | null;
 }
 
 export interface HealthTokenResponse {

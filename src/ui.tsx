@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "radix-ui";
-import { ChevronLeft, ChevronRight, Settings as Gear } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Settings as Gear } from "lucide-react";
+import { storageGet, storageSet } from "./api";
 
 /* Navigation: each tab keeps its own stack, so switching tabs never loses your place. */
 export type Route = { screen: string; params?: Record<string, string>; scroll?: number };
@@ -35,6 +36,22 @@ export function Section({ title, meta, action, children, className = "" }: { tit
   return <section className={`section ${className}`}>
     {(title || meta || action) && <div className="section-head"><h2 className="section-title">{title}</h2>{action ? <button className="section-action" onClick={action.onClick}>{action.label}</button> : meta && <span className="section-meta">{meta}</span>}</div>}
     {children}
+  </section>;
+}
+
+/** A section that folds to its title: `note` always shows, `summary` only while folded. Remembered per device. */
+export function FoldSection({ id, title, meta, note, summary, defaultOpen = true, children }: { id: string; title: ReactNode; meta?: ReactNode; note?: ReactNode; summary?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
+  const key = `kai-fold-${id}`;
+  const [open, setOpen] = useState(() => { const saved = storageGet(key); return saved === null ? defaultOpen : saved === "1"; });
+  const toggle = () => { storageSet(key, open ? "0" : "1"); setOpen(!open); };
+  return <section className={`section fold${open ? "" : " folded"}`}>
+    <button className="section-head fold-head" onClick={toggle} aria-expanded={open}>
+      <h2 className="section-title"><ChevronDown className="fold-chev" />{title}</h2>
+      {meta && <span className="section-meta">{meta}</span>}
+    </button>
+    {note && <p className="fold-note">{note}</p>}
+    {!open && summary && <p className="fold-summary">{summary}</p>}
+    {open && children}
   </section>;
 }
 

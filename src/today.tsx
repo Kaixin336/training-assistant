@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, MessagesSquare, Plus, X } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronLeft, ChevronRight, ImagePlus, LoaderCircle, MessagesSquare, Plus, RefreshCw, X } from "lucide-react";
 import { addDays, itemSummary, todayNZ, weekStart, type AppData, type ChatMessage, type LogItem, type Workout } from "@/lib/domain";
 import { postJson, storageGet, storageSet } from "./api";
 import { useApp, type Actions } from "./context";
 import { feelText, kindLabels, phaseLabels, unitTags } from "./labels";
-import { dayExercises, dayLabel, fmt, formatLoad, phaseWeek, primaryMeasure, sessionValue, setText, signed, weekday, type DayExercise } from "./metrics";
-import { DayTypeToggle, DietLink, exerciseTarget, planCheckIns, ReadinessCard, TodayStrip } from "./plan-ui";
+import { dayExercises, dayLabel, fmt, formatLoad, LOADED, phaseWeek, primaryMeasure, sessionValue, setText, signed, weekday, type DayExercise } from "./metrics";
+import { DayTypeToggle, DietLink, exerciseTarget, planCheckIns, ReadinessCard, runHealthSync, TodayStrip } from "./plan-ui";
 import { isPlanned } from "@/lib/diet";
-import { Empty, Screen, Section, Sheet, useNow, useToast } from "./ui";
+import { Empty, FoldSection, Screen, Section, Sheet, useNow, useToast } from "./ui";
 
 const FINISH = /^(?:结束训练|训练结束|结束本次训练|今天练完了|练完了)[。.!！]?$/;
 const DATED = /^\s*(?:\d{4}-\d{2}-\d{2}|今天|昨天|前天|yesterday|today)/i;
@@ -19,7 +19,7 @@ export function TodayScreen() {
   const week = phaseWeek(data);
   return <Screen root composer title={isToday ? "今天" : dayLabel(date)}
     kicker={<><DayTypeToggle date={date} />{weekday(date)}{data.settings.phase !== "unspecified" ? ` · ${phaseLabels[data.settings.phase].replace("期", "")}第 ${week ?? 1} 周` : ""}</>}
-    right={<>{!isToday && <button className="text-btn strong" onClick={() => setDate(data.today)}>今天</button>}<button className="icon-btn" aria-label="对话记录" onClick={() => setLog(true)}><MessagesSquare /></button></>}>
+    right={<>{!isToday && <button className="text-btn strong" onClick={() => setDate(data.today)}>今天</button>}<button className="icon-btn" aria-label="立即同步健康数据" onClick={runHealthSync}><RefreshCw /></button><button className="icon-btn" aria-label="对话记录" onClick={() => setLog(true)}><MessagesSquare /></button></>}>
     <WeekStrip />
     <TodayStrip date={date} />
     {isToday && <ReadinessCard />}
@@ -65,11 +65,10 @@ function LiveSession() {
 }
 
 function CheckIns() {
-  const { data, actions } = useApp();
+  const { data } = useApp();
   const due = planCheckIns(data);
   if (!due.length) return null;
-  const open = (_key: string) => { window.location.href = `shortcuts://run-shortcut?name=${encodeURIComponent("同步健康")}`; void actions; };
-  return <div className="chips checkins">{due.map(d => <button key={d.key} className="chip" onClick={() => open(d.key)}><span className="dot" />{d.label}</button>)}</div>;
+  return <div className="chips checkins">{due.map(d => <button key={d.key} className="chip" onClick={runHealthSync}><span className="dot" />{d.label}</button>)}</div>;
 }
 
 function DayLog() {
@@ -83,6 +82,9 @@ function DayLog() {
   const notes = items.filter(i => i.kind === "note");
   const photos = items.filter(i => i.kind === "photo");
   const workingSets = exercises.reduce((n, e) => n + e.rows.filter(r => !r.set.isWarmup).length, 0);
+  // The exercise logged to most recently is the one in progress: it stays open while earlier ones fold away.
+  const lastLogged = (e: DayExercise) => e.records.reduce((t, r) => r.createdAt > t ? r.createdAt : t, "");
+  const currentKey = exercises.reduce<DayExercise | null>((a, e) => !a || lastLogged(e) > lastLogged(a) ? e : a, null)?.key;
   const real = items.filter(i => !isPlanned(i));
   if (!real.length && !items.length) return data.items.some(i => !isPlanned(i)) ? <Empty title={date === data.today ? "今天还没有记录" : "这一天没有记录"}>在下方输入，例如 <code>卧推 60kg 3x8</code></Empty> : <FirstRun />;
   const entry = (item: LogItem, value?: string, sub?: string) => <button key={item.id} className="entry" onClick={() => actions.edit(item)}>
@@ -90,18 +92,58 @@ function DayLog() {
     {value && <span className="entry-value">{value}</span>}
   </button>;
   return <>
-    {exercises.length > 0 && <Section title="训练" meta={`${exercises.length} 个动作 · ${workingSets} 组`}>{exercises.map(e => <ExerciseBlock key={e.key} exercise={e} />)}</Section>}
+    {exercises.length > 0 && <FoldSection id="training" title="训练" meta={`${exercises.length} 个动作 · ${workingSets} 组`} note={trainingNote(exercises, data.settings.phase)}>{exercises.map(e => <ExerciseBlock key={e.key} exercise={e} current={e.key === currentKey} />)}</FoldSection>}
     {cardio.length > 0 && <Section title="运动">{cardio.map(w => entry(w, undefined, w.id.startsWith("health-") ? "来自 Apple 健康" : w.session === "Apple Watch" ? "来自截图" : undefined))}</Section>}
     <DietLink date={date} />
     {body.length > 0 && <Section title="身体">{body.map(m => entry(m, undefined, m.id.startsWith("health-") ? "来自健康" : undefined))}</Section>}
-    {recovery.length > 0 && <Section title="恢复">{recovery.map(h => entry(h, undefined, h.id.startsWith("health-") ? "来自健康" : undefined))}</Section>}
+    {recovery.length > 0 && <FoldSection id="health" title="健康数据" defaultOpen={false} summary={recovery.map(itemSummary).join(" · ")}>{recovery.map(h => entry(h, undefined, h.id.startsWith("health-") ? "来自健康" : undefined))}</FoldSection>}
     {notes.length > 0 && <Section title="备注">{notes.map(n => entry(n, undefined, n.kind === "note" && n.category === "pain" ? "疼痛" : undefined))}</Section>}
     {photos.length > 0 && <Section title="照片"><button className="entry" onClick={() => actions.openTab("body", { screen: "photos" })}><span className="entry-main">这天拍了 {photos.length} 张</span><span className="entry-value"><ChevronRight size={16} /></span></button></Section>}
   </>;
 }
 
-function ExerciseBlock({ exercise }: { exercise: DayExercise }) {
+/** Weight × reps over the working sets, as entered (per side / per hand for those exercises). Not for assisted or bodyweight work. */
+function exerciseVolume(exercise: DayExercise) {
+  if (!LOADED.has(exercise.unit)) return null;
+  const merged: Workout = { ...exercise.records[0], sets: exercise.rows.map(r => r.set) };
+  return sessionValue(merged, "volume");
+}
+
+/**
+ * The day's training in one short line: total weight, then a verdict from each exercise against its last session
+ * (pain first, then drops, then gains). In a cut, holding strength counts as a win.
+ */
+function trainingNote(exercises: DayExercise[], phase: string) {
+  const total = exercises.reduce((n, e) => n + (exerciseVolume(e) ?? 0), 0);
+  const rows = exercises.map(e => {
+    const measure = primaryMeasure(e.unit), merged: Workout = { ...e.records[0], sets: e.rows.map(r => r.set) };
+    const now = sessionValue(merged, measure), before = e.previous ? sessionValue(e.previous, measure) : null;
+    return { name: e.name, change: now !== null && before ? now / before - 1 : null, pain: e.records.some(r => r.pain) };
+  });
+  const names = (list: typeof rows) => list.slice(0, 2).map(r => r.name).join("、") + (list.length > 2 ? ` 等 ${list.length} 个动作` : "");
+  const compared = rows.filter(r => r.change !== null);
+  const up = compared.filter(r => r.change! > .01), down = compared.filter(r => r.change! < -.03);
+  const cutting = phase === "fat_loss";
+  const pain = rows.filter(r => r.pain);
+  const verdict = pain.length ? `${names(pain)}有疼痛，下次先别加重`
+    : down.length ? `${names(down)}比上次弱一点，留意睡眠和吃够${up.length ? `；${names(up)}还在涨` : ""}`
+    : up.length ? `${names(up)}比上次更强${cutting ? "，减脂期还在进步，练得很扎实" : up.length < compared.length ? "，其余持平" : "，状态在线"}`
+    : compared.length ? (cutting ? "和上次持平，减脂期守住力量就是胜利" : "和上次持平，下次试着多做一次")
+    : "都是第一次记录的动作，下次会和今天比";
+  return `${total ? `总重量 ${Math.round(total).toLocaleString("zh-CN")} kg · ` : ""}${verdict}。`;
+}
+
+// Folding chosen by hand, per day and exercise; kept while switching tabs.
+const folded = new Map<string, boolean>();
+
+function ExerciseBlock({ exercise, current }: { exercise: DayExercise; current: boolean }) {
   const { data, date, actions } = useApp();
+  const foldKey = `${date}|${exercise.key}`;
+  // Long exercises fold by default unless they are the one in progress; a tap overrides either way.
+  const [open, setOpen] = useState(() => folded.get(foldKey) ?? (current || exercise.rows.length <= 3));
+  const toggle = () => { folded.set(foldKey, !open); setOpen(!open); };
+  // Moving on to the next exercise folds this one (and coming back opens it), unless it was set by hand.
+  useEffect(() => { if (!folded.has(foldKey)) setOpen(current || exercise.rows.length <= 3); }, [current, foldKey, exercise.rows.length]);
   const target = exerciseTarget(data.items, exercise.id, date, exercise.unit, data.settings);
   const { name, unit, rows, previous } = exercise;
   const previousSets = previous ? previous.sets.filter(s => !s.isWarmup) : [];
@@ -112,13 +154,24 @@ function ExerciseBlock({ exercise }: { exercise: DayExercise }) {
   const lastLoaded = [...rows].reverse().find(r => !r.set.isWarmup && r.set.weightKg !== null)?.set.weightKg;
   const loadPrefix = lastLoaded == null ? "" : unit === "kg/side" ? `每边${lastLoaded}kg ` : unit === "kg/hand" ? `单手${lastLoaded}kg ` : unit === "added kg" ? `加重${lastLoaded}kg ` : unit === "assisted kg" ? `辅助${lastLoaded}kg ` : unit === "kg" ? `${lastLoaded}kg ` : "";
   let n = 0;
-  return <div className="exercise">
-    <button className="exercise-head" onClick={() => exercise.id && actions.openTab("strength", { screen: "exercise", params: { id: exercise.id } })}>
-      <span className="exercise-name">{name}</span>
-      {unitTags[unit] && <span className="tag">{unitTags[unit]}</span>}
-      {pain && <span className="tag hot">疼痛</span>}
-      {exercise.id && <ChevronRight className="row-chev" />}
-    </button>
+  const working = rows.filter(r => !r.set.isWarmup).map(r => r.set);
+  const top = [...working].sort((a, b) => (b.weightKg ?? 0) - (a.weightKg ?? 0) || (b.reps ?? 0) - (a.reps ?? 0))[0];
+  const valueText = value !== null ? `${measure === "reps" ? "总次数" : "1RM"} ${fmt(value, measure === "reps" ? 0 : 1)}` : "";
+  const volume = exerciseVolume(exercise);
+  const volumeText = volume ? `总重 ${Math.round(volume).toLocaleString("zh-CN")} kg` : "";
+  const summary = [`${working.length} 组`, top ? `最重 ${setText(top, unit)}` : "", valueText, volumeText].filter(Boolean).join(" · ");
+  return <div className={`exercise${open ? "" : " folded"}`}>
+    <div className="exercise-head">
+      <button className="exercise-toggle" onClick={toggle} aria-expanded={open} aria-label={`${open ? "收起" : "展开"}${name}`}>
+        <ChevronDown className="fold-chev" />
+        <span className="exercise-name">{name}</span>
+        {unitTags[unit] && <span className="tag">{unitTags[unit]}</span>}
+        {pain && <span className="tag hot">疼痛</span>}
+        {!open && <span className="exercise-summary">{summary}</span>}
+      </button>
+      {exercise.id && <button className="exercise-more" aria-label={`${name}的历史和曲线`} onClick={() => actions.openTab("strength", { screen: "exercise", params: { id: exercise.id! } })}><ChevronRight className="row-chev" /></button>}
+    </div>
+    {open && <>
     {target && <div className={`target ${target.tone}`}><span>目标</span>{target.text}</div>}
     <div className="set-grid set-head" aria-hidden="true"><span>组</span><span>上次</span><span>重量</span><span>次数</span><span /></div>
     {rows.map(({ set, record, index }) => {
@@ -134,9 +187,10 @@ function ExerciseBlock({ exercise }: { exercise: DayExercise }) {
       </button>;
     })}
     <div className="exercise-foot">
-      <span>{value !== null ? `${measure === "reps" ? "总次数" : "估算 1RM"} ${fmt(value, measure === "reps" ? 0 : 1)}${before !== null ? ` · 比上次 ${signed(value - before, measure === "reps" ? 0 : 1)}` : ""}` : ""}</span>
+      <span>{[valueText && before !== null ? `${valueText} · 比上次 ${signed(value! - before, measure === "reps" ? 0 : 1)}` : valueText, volumeText].filter(Boolean).join(" · ")}</span>
       <button className="add-set" onClick={() => actions.compose(`${name} ${loadPrefix}`)}><Plus />一组</button>
     </div>
+    </>}
   </div>;
 }
 
